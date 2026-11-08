@@ -20,4 +20,6 @@ for(const entry of listPackage(archive)){
 const p=JSON.parse(fs.readFileSync('app/package.json','utf8'));
 if(p.version!==r.version||p.name!=='volna-player'||p.build.appId!=='Orbita.Player'||p.build.publish[0].repo!=='orbita-releases'||p.build.publish[0].owner!=='epigenezis-boop')throw Error('Wrong application or release version');
 if(p.build.nsis.perMachine!==false||p.build.nsis.allowElevation!==false)throw Error('Per-user installation required');
+// Old npm scaffold used this informational root field; modern builder forbids it.
+delete p.directories;fs.writeFileSync('app/package.json',JSON.stringify(p,null,2)+'\n');
 console.log(`Verified Orbita ${p.version}; installation will not request elevation.`);
