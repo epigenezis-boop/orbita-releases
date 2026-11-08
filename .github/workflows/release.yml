@@ -1,0 +1,72 @@
+name: Build and publish Orbita for Windows
+on:
+  push:
+    branches: [main]
+    paths: [release.json]
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: orbita-stable-release
+  cancel-in-progress: false
+jobs:
+  release:
+    if: github.repository == 'epigenezis-boop/orbita-releases'
+    runs-on: windows-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install archive reader
+        run: npm install --prefix tools --ignore-scripts --no-audit --no-fund @electron/asar@4.0.1
+      - name: Verify and extract release payload
+        run: node tools/assemble.mjs
+      - name: Install locked build dependencies
+        working-directory: app
+        run: npm ci --no-audit --no-fund
+      - name: Test application
+        working-directory: app
+        run: npm test
+      - name: Build per-user installer
+        working-directory: app
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: 'false'
+        run: npm run package:win
+      - name: Verify no elevation is requested
+        shell: pwsh
+        run: |
+          $setup = (Get-ChildItem app/dist/Orbita-Setup-*-x64.exe).FullName
+          ./tools/verify-manifest.ps1 -Path $setup
+          ./tools/verify-manifest.ps1 -Path app/dist/win-unpacked/Orbita.exe
+      - name: Preserve installer and update metadata
+        uses: actions/upload-artifact@v4
+        with:
+          name: Orbita-Windows-x64
+          path: |
+            app/dist/Orbita-Setup-*-x64.exe
+            app/dist/Orbita-Setup-*-x64.exe.blockmap
+            app/dist/latest.yml
+          if-no-files-found: error
+      - name: Publish complete stable release
+        shell: pwsh
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: epigenezis-boop/orbita-releases
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $v = (Get-Content release.json | ConvertFrom-Json).version
+          $tag = "v$v"
+          $existing = gh release view $tag --json isDraft 2>$null
+          if ($LASTEXITCODE -eq 0) {
+            if (-not ($existing | ConvertFrom-Json).isDraft) { throw 'This stable release is already published; increase the version.' }
+          } else {
+            gh release create $tag --draft --target $env:GITHUB_SHA --title "Orbita $v" --notes-file RELEASE_NOTES.md
+            if ($LASTEXITCODE -ne 0) { throw 'Cannot create draft release.' }
+          }
+          $files = @("app/dist/Orbita-Setup-$v-x64.exe", "app/dist/Orbita-Setup-$v-x64.exe.blockmap", 'app/dist/latest.yml')
+          gh release upload $tag @files --clobber
+          if ($LASTEXITCODE -ne 0) { throw 'Upload failed; release remains a draft.' }
+          gh release edit $tag --draft=false --latest
+          if ($LASTEXITCODE -ne 0) { throw 'Cannot publish release.' }

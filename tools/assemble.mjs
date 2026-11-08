@@ -1,0 +1,14 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import {createHash} from 'node:crypto';
+import {gunzipSync} from 'node:zlib';
+import {extractAll} from '@electron/asar';
+const r=JSON.parse(fs.readFileSync('release.json','utf8'));
+if(!/^\d+\.\d+\.\d+$/.test(r.version)||!Number.isInteger(r.parts)||r.parts<1||r.parts>100)throw Error('Invalid release manifest');
+const bytes=Buffer.concat(Array.from({length:r.parts},(_,i)=>fs.readFileSync(`payload/app.asar.gz.part-${String(i).padStart(3,'0')}`)));
+if(createHash('sha256').update(bytes).digest('hex')!==r.sha256)throw Error('Release payload SHA-256 mismatch');
+fs.mkdirSync('staging',{recursive:true});fs.writeFileSync('staging/app.asar',gunzipSync(bytes));extractAll('staging/app.asar','app');
+const p=JSON.parse(fs.readFileSync('app/package.json','utf8'));
+if(p.version!==r.version||p.name!=='volna-player'||p.build.appId!=='Orbita.Player'||p.build.publish[0].repo!=='orbita-releases'||p.build.publish[0].owner!=='epigenezis-boop')throw Error('Wrong application or release version');
+if(p.build.nsis.perMachine!==false||p.build.nsis.allowElevation!==false)throw Error('Per-user installation required');
+console.log(`Verified Orbita ${p.version}; installation will not request elevation.`);
