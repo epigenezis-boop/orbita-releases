@@ -12,9 +12,10 @@ fs.mkdirSync('staging',{recursive:true});const archive='staging/app.asar';fs.wri
 for(const entry of listPackage(archive)){
  const name=entry.replaceAll('\\','/').replace(/^\/+/, '');
  if(!['package.json','package-lock.json'].includes(name)&&!name.startsWith('src/')&&!name.startsWith('test/'))continue;
- const stat=statFile(archive,name,false);if(stat.files||stat.link)continue;
+ const nativeName=name.split('/').join(path.sep);
+ const stat=statFile(archive,nativeName,false);if(stat.files||stat.link)continue;
  const dest=path.resolve('app',name);if(!dest.startsWith(path.resolve('app')+path.sep))throw Error('Invalid archive path');
- fs.mkdirSync(path.dirname(dest),{recursive:true});fs.writeFileSync(dest,extractFile(archive,name));
+ fs.mkdirSync(path.dirname(dest),{recursive:true});fs.writeFileSync(dest,extractFile(archive,nativeName));
 }
 const p=JSON.parse(fs.readFileSync('app/package.json','utf8'));
 if(p.version!==r.version||p.name!=='volna-player'||p.build.appId!=='Orbita.Player'||p.build.publish[0].repo!=='orbita-releases'||p.build.publish[0].owner!=='epigenezis-boop')throw Error('Wrong application or release version');

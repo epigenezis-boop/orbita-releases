@@ -1,0 +1,13 @@
+'use strict';
+const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypto'),assert=require('node:assert/strict');
+const yaml=require(path.resolve('app/node_modules/js-yaml'));
+const {version}=JSON.parse(fs.readFileSync('release.json','utf8'));
+const config=yaml.load(fs.readFileSync('app/dist/win-unpacked/resources/app-update.yml','utf8'));
+assert.equal(config.provider,'github');assert.equal(config.owner,'epigenezis-boop');assert.equal(config.repo,'orbita-releases');
+const meta=yaml.load(fs.readFileSync('app/dist/latest.yml','utf8'));
+assert.equal(meta.version,version);assert.equal(meta.files.length,1);
+const name=`Orbita-Setup-${version}-x64.exe`;assert.equal(meta.files[0].url,name);
+assert.notEqual(meta.files[0].isAdminRightsRequired,true);assert.notEqual(meta.isAdminRightsRequired,true);
+const bytes=fs.readFileSync(path.join('app/dist',name));
+assert.equal(crypto.createHash('sha512').update(bytes).digest('base64'),meta.files[0].sha512);
+console.log('Verified stable update channel, installer SHA-512 and per-user update metadata.');

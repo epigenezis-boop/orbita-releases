@@ -34,6 +34,8 @@ jobs:
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: 'false'
         run: npm run package:win
+      - name: Verify update channel and checksums
+        run: node tools/verify-release.cjs
       - name: Verify no elevation is requested
         shell: pwsh
         run: |
