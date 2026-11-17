@@ -1,6 +1,6 @@
 {
-  "version": "1.7.2",
+  "version": "1.7.3",
   "parts": 1,
-  "sha256": "211a80140bee4bfc765fb8578b2f97757219d5dc27b065fa477fc88c023497e5",
+  "sha256": "b0f36e1ee44f15eb60a0cfbe55d7788bf0f533d6d1d43e6721c178bb6f12267b",
   "build": 1
 }
