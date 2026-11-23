@@ -29,6 +29,14 @@ jobs:
       - name: Test application
         working-directory: app
         run: npm test
+      - name: Install browser for regression checks
+        working-directory: app
+        run: npx playwright install chromium
+      - name: Test interface and real WebAudio
+        working-directory: app
+        run: |
+          npm run test:ui
+          npm run test:audio
       - name: Build per-user installer
         working-directory: app
         env:
