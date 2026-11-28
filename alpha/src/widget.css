@@ -1,0 +1,24 @@
+@font-face{font-family:Orbita;src:url('fonts/RussoOne-Regular.ttf')}*{box-sizing:border-box}body{margin:0;padding:9px 13px 10px;background:#252a40;color:#ffe6a8;border:2px solid #fbbb62;border-radius:12px;height:100vh;font:12px 'Segoe UI',sans-serif;overflow:hidden}header{display:flex;justify-content:space-between;align-items:center;-webkit-app-region:drag;height:25px}header span{font:14px Orbita,sans-serif;letter-spacing:2px}button,input{-webkit-app-region:no-drag}button{color:#64d7c8;background:#323d57;border:1px solid #8fbdbd;border-radius:6px;padding:3px 9px;cursor:pointer}button:hover{background:#4a5873}header button{border:0;background:transparent;font-size:18px;padding:0 7px}.ribbon{height:5px;margin:6px 0 12px;background:linear-gradient(90deg,#ed4652 0 25%,#ff7634 25% 50%,#ffb634 50% 75%,#ffe6a8 75%)}main{display:flex;gap:12px;align-items:center}img{width:64px;height:64px;object-fit:cover;border-radius:7px;border:1px solid #8bc4ba}.info{flex:1;min-width:0}.info strong,.info>span{display:block;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.info strong{font-weight:650;font-size:13px}.info>span{color:#d2d7dd;font-size:11px;margin:5px 0 9px}.controls{display:flex;align-items:center;gap:8px}.controls #play{background:#ffe6a8;border-color:#ff8c32;color:#252a40;box-shadow:inset 0 -3px #ff8e32;min-width:40px}label{display:flex;gap:7px;align-items:center;margin-left:auto;color:#64d7c8}input[type=range]{accent-color:#ff9539;height:4px;cursor:pointer;width:75px}footer{display:flex;align-items:center;gap:8px;margin-top:13px;font:10px Consolas,monospace}footer input{flex:1}button:focus-visible,input:focus-visible{outline:2px solid #ff9b3c;outline-offset:2px}
+
+#play.isPausedIcon:before,#play.isPausedIcon:after{content:'';display:inline-block;width:6px;height:18px;background:currentColor;margin:0 3px;border-radius:1px}
+@font-face{font-family:CartridgeLocal;src:local('Cartridge Bold'),local('Cartridge');font-display:swap}
+.info strong,.info>span{font-family:CartridgeLocal,Orbita,'Segoe UI',sans-serif;font-weight:400;letter-spacing:.15px;line-height:1.35}
+.info strong{font-size:13px}.info>span{font-size:11px;margin-top:4px;margin-bottom:8px}
+
+/* Fixed geometry for both transport states; triangle centroid is at 12,12. */
+body{font-family:CartridgeLocal,Orbita,sans-serif;font-weight:400}
+button,input,footer,header span{font-family:inherit;font-weight:400}
+header{gap:10px;height:28px}header>span{flex-shrink:0}.windowButtons{display:flex;flex-shrink:0}
+#miniSpectrum{height:26px;min-width:0;flex:1;display:flex;align-items:flex-end;justify-content:space-between;gap:2px;overflow:hidden;opacity:.9}
+#miniSpectrum i{display:block;flex:1;max-width:6px;min-width:1px;height:2px;background:repeating-linear-gradient(to top,var(--teal) 0 3px,transparent 3px 5px)}
+#miniSpectrum i:nth-child(n+9){background:repeating-linear-gradient(to top,var(--orange) 0 3px,transparent 3px 5px)}
+#miniSpectrum i:nth-child(n+17){background:repeating-linear-gradient(to top,var(--cream) 0 3px,transparent 3px 5px)}
+.controls button{width:28px;height:28px;flex:0 0 28px;display:grid;place-items:center;padding:0;line-height:1}
+.controls #play{width:44px;min-width:44px;height:30px;flex:0 0 44px;padding:0 0 3px;display:grid;place-items:center}
+#play svg{width:20px;height:20px;fill:currentColor;display:block}
+#play:before,#play:after{display:none!important}
+
+#like{width:26px;min-width:26px;padding:0;font-size:19px;line-height:1}#like[aria-pressed="true"]{color:var(--orange,#ff8c2b)}#like[hidden]{display:none}
+
+@font-face{font-family:OrbitaText;src:url('fonts/Exo2-Variable.ttf') format('truetype');font-weight:100 900;font-display:swap}
+body #title,body #artist,body footer span{font-family:OrbitaText,'Segoe UI',sans-serif!important;letter-spacing:0}body #title{font-size:14px;font-weight:600;line-height:1.25}body #artist{font-size:12px;font-weight:450;line-height:1.35}body footer span{font-size:11px;font-variant-numeric:tabular-nums}

@@ -1,0 +1,2 @@
+const {contextBridge,ipcRenderer}=require('electron');
+contextBridge.exposeInMainWorld('mini',{language:ipcRenderer.sendSync('language-current'),onLanguage:fn=>ipcRenderer.on('language',(_e,l)=>fn(l)),action:(action,value)=>ipcRenderer.send('widget-action',{action,value}),onTheme:fn=>ipcRenderer.on('theme',(_e,t)=>fn(t)),onSpectrum:fn=>ipcRenderer.on('widget-spectrum',(_e,levels)=>fn(levels)),onState:fn=>ipcRenderer.on('widget-state',(_event,s)=>fn(s))});

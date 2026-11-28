@@ -1,0 +1,8 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),S=require('../src/smart-search.js');
+const song={title:'Nothing Else Matters (Remastered)',artist:'Metallica',album:'Metallica'};
+test('case punctuation spaces and word order do not matter',()=>{for(const q of ['NOTHING ELSE','nothingelsematters','matters metallica','Metallica — Nothing','no thing else matters'])assert.ok(S.trackScore(song,q)>0,q);});
+test('typos keyboard layout transliteration and ё',()=>{for(const q of ['nothng metallica','metallika nothing','ьуефддшсф'])assert.ok(S.trackScore(song,q)>0,q);assert.ok(S.trackScore({title:'Ёлки',artist:'Мумий Тролль'},'елки'));assert.ok(S.trackScore({title:'Закат',artist:'Кино'},'zakat kino'));});
+test('all meaningful words are required and exact results rank first',()=>{assert.equal(S.trackScore(song,'nothing banana'),0);assert.deepEqual(S.rank([{id:'typo',title:'Nothng',artist:''},{id:'exact',title:'Nothing',artist:''}], 'nothing').map(x=>x.id),['exact','typo']);assert.equal(S.rank([song],'').length,1);});
+test('joined query can be separated using catalog vocabulary',()=>{assert.ok(S.variants('nothingelsematters').includes('nothing else matters'));assert.ok(S.variants('sonofwallachia',[{title:'Son of Wallachia',artist:'Ad Infinitum'}]).includes('son of wallachia'));});
+
+test('artist matches precede titles then albums without losing fuzzy search',()=>{const rows=[{id:'album',artist:'Other',title:'Else',album:'Metallica'},{id:'title',artist:'Other',title:'Metallica'},{id:'artist',artist:'Metallica',title:'Nothing Else Matters'}];assert.deepEqual(S.rank(rows,'metallica').map(t=>t.id),['artist','title','album']);assert.deepEqual(S.rank(rows,'METALLIKA').map(t=>t.id),['artist','title','album']);});

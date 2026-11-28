@@ -1,0 +1,3 @@
+const {test}=require('node:test'),assert=require('node:assert/strict'),{API}=require('../src/api.cjs');
+test('web stream profile preserves device limit instead of retrying with random identities',async()=>{let n=0;const a=new API(async()=>{n++;return {errors:[{message:'Device id limit exceeded',extensions:{code:'DOWNSTREAM_SERVICE_ERROR'}}]};});a.token='secret';await assert.rejects(a.stream('12'),/DEVICE_LIMIT\/STREAM/);assert.equal(n,1);});
+test('HLS-only response is explicit and never treated as a direct audio file',async()=>{const a=new API(async()=>({data:{mediaContents:[{stream:{high:null,mid:null},streamV3:{hls:'https://example.test/stream.m3u8'}}]}}));a.token='secret';await assert.rejects(a.stream('12'),/STREAM_FORMAT/);});

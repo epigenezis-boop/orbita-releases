@@ -1,0 +1,75 @@
+{
+  "name": "volna-player",
+  "version": "1.8.0",
+  "description": "Orbita personal music station",
+  "main": "src/main.cjs",
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test test/*.test.cjs",
+    "package:win": "electron-builder --win nsis --x64 --publish never",
+    "release:win": "electron-builder --win nsis --x64 --publish always",
+    "test:ui": "node test/refined-ui.cjs",
+    "test:audio": "node test/audio-runtime.cjs"
+  },
+  "keywords": [],
+  "author": "Personal project",
+  "license": "UNLICENSED",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "45.2.1",
+    "electron-builder": "26.18.1",
+    "playwright": "1.62.1"
+  },
+  "dependencies": {
+    "electron-updater": "6.8.11",
+    "music-metadata": "^11.13.0"
+  },
+  "productName": "Orbita",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/epigenezis-boop/orbita-releases.git"
+  },
+  "build": {
+    "appId": "Orbita.Player",
+    "productName": "Orbita",
+    "asar": true,
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "src/**/*",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "src/icon.ico",
+      "artifactName": "Orbita-Setup-${version}-${arch}.${ext}",
+      "verifyUpdateCodeSignature": false
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": false,
+      "deleteAppDataOnUninstall": false,
+      "createDesktopShortcut": true,
+      "shortcutName": "Orbita"
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "epigenezis-boop",
+        "repo": "orbita-releases",
+        "private": false,
+        "releaseType": "release"
+      }
+    ]
+  }
+}
