@@ -4,9 +4,10 @@ const { DiscoveryError } = require('./providers.cjs');
 const { mbid, text, artist, resolveArtists, radioCandidates, recording, matchRecording } = require('./model.cjs');
 
 class Discovery {
-  constructor({ providers, storage, searchZvuk, connected, progress }) {
-    Object.assign(this, { providers, storage, searchZvuk, connected, progress });
+  constructor({ providers, storage, searchZvuk, connected, progress, graph = null, cache = null, catalogScope = null }) {
+    Object.assign(this, { providers, storage, searchZvuk, connected, progress, graph, persistentCache: cache, catalogScope });
     this.artistOptions = new Set();
+    this.artistDetails = new Map();
     this.matchCache = new Map();
     this.job = null;
     this.report = null;
@@ -52,6 +53,11 @@ class Discovery {
             ? [artist(await this.providers.music.artistById(id, signal))].filter(Boolean)
             : resolveArtists(await this.providers.music.artist(query, signal), query);
           signal.throwIfAborted();
+          for (const option of options) this.artistDetails.set(option.id, option);
+          if (options.length) {
+            try { this.graph?.rememberArtists(options); }
+            catch { /* the graph must never break identification */ }
+          }
           result.push({ query, options });
         } catch (error) {
           signal.throwIfAborted();
@@ -134,6 +140,20 @@ class Discovery {
         notices: [...notices], candidates: candidatesWithMetadata,
         catalogRevision,
       };
+      if (this.graph) {
+        try {
+          if (this.graph.available === false) notices.add('graph:unavailable');
+          else {
+            const seeds = seedIds.map((id) => this.artistDetails.get(id)).filter(Boolean);
+            const stored = this.graph.recordReport(this.report, seeds);
+            if (!stored?.stored) notices.add('graph:storage');
+          }
+          this.report.notices = [...notices];
+        } catch {
+          notices.add('graph:storage');
+          this.report.notices = [...notices];
+        }
+      }
       return this.report;
     });
   }
@@ -155,9 +175,18 @@ class Discovery {
     if (cached && cached.expires > Date.now()) return cached.match;
     const revision = this.catalogRevision;
     const query = (metadata.title.slice(0, 105) + ' ' + metadata.artistCredit.slice(0, 90)).trim();
-    const results = await this.searchZvuk(query, signal);
+    const scope = typeof this.catalogScope === 'function' ? String(this.catalogScope() || 'anonymous') : 'anonymous';
+    let results = null;
+    try { results = this.persistentCache?.getSearch(scope, query) || null; }
+    catch { results = null; }
+    if (!results) {
+      results = await this.searchZvuk(query, signal);
+      signal.throwIfAborted();
+      if (revision !== this.catalogRevision) return { status: 'connect-zvuk', options: [] };
+      try { this.persistentCache?.putSearch(scope, query, results); }
+      catch { /* persistent cache is optional */ }
+    }
     signal.throwIfAborted();
-    if (revision !== this.catalogRevision) return { status: 'connect-zvuk', options: [] };
     const match = matchRecording(metadata, results);
     this.matchCache.set(key, { match, expires: Date.now() + 20 * 60_000 });
     if (this.matchCache.size > 256) this.matchCache.delete(this.matchCache.keys().next().value);
@@ -202,6 +231,8 @@ class Discovery {
     const entry = this.report?.candidates.find((candidate) => candidate.id === mbid(id));
     if (!entry || ![null, 'like', 'dislike'].includes(vote)) throw new DiscoveryError('invalid-feedback');
     this.storage.vote(entry.id, vote);
+    try { this.graph?.recordVote(entry.id, vote); }
+    catch { /* feedback stays in the JSON store if the graph is unavailable */ }
     entry.feedback = vote;
     return vote;
   }
@@ -211,12 +242,18 @@ class Discovery {
     if (!entry || !this.connected() || this.report.catalogRevision !== this.catalogRevision) {
       throw new DiscoveryError('zvuk:denied');
     }
-    if (entry.match.status === 'matched' && entry.match.choice.track.id === trackId) return entry.match.choice.track;
+    if (entry.match.status === 'matched' && entry.match.choice.track.id === trackId) {
+      try { this.graph?.recordChoice(entry.id, entry.match.choice.track); }
+      catch { /* optional */ }
+      return entry.match.choice.track;
+    }
     const selected = entry.match.options.find(({ track }) => track.id === trackId);
     if (!selected) throw new DiscoveryError('invalid-track');
     entry.match = {
       status: 'matched', choice: { ...selected, confidence: 'confirmed' }, options: [],
     };
+    try { this.graph?.recordChoice(entry.id, selected.track); }
+    catch { /* a confirmed choice is also persisted with the next report */ }
     return selected.track;
   }
 

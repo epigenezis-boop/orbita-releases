@@ -44,8 +44,8 @@ function retryDelay(headers) {
 }
 
 class ReadOnlyProvider {
-  constructor(name, base, fetch, interval, cacheAge) {
-    Object.assign(this, { name, base, fetch, interval, cacheAge });
+  constructor(name, base, fetch, interval, cacheAge, persistent = null, persistentAge = 0) {
+    Object.assign(this, { name, base, fetch, interval, cacheAge, persistent, persistentAge });
     this.cache = new Map();
     this.tail = Promise.resolve();
     this.nextRequest = 0;
@@ -62,6 +62,17 @@ class ReadOnlyProvider {
         this.cache.delete(url.href);
         this.cache.set(url.href, hit);
         return hit.value;
+      }
+      // The persistent cache stores public provider responses only; token-bearing
+      // requests pass cache:false and never reach this branch.
+      if (cache && this.persistent) {
+        let saved = null;
+        try { saved = this.persistent.get(this.name, url.href, ''); }
+        catch { saved = null; }
+        if (saved !== null && saved !== undefined) {
+          this.cache.set(url.href, { value: saved, expires: Date.now() + this.cacheAge });
+          return saved;
+        }
       }
       if (this.blockedUntil > Date.now()) throw new DiscoveryError('rate-limited', this.name);
       const wait = this.nextRequest - Date.now();
@@ -81,6 +92,10 @@ class ReadOnlyProvider {
       if (cache) {
         this.cache.set(url.href, { value, expires: Date.now() + this.cacheAge });
         if (this.cache.size > 512) this.cache.delete(this.cache.keys().next().value);
+        if (value !== null && this.persistent) {
+          try { this.persistent.put(this.name, url.href, '', value, this.persistentAge || this.cacheAge, url.pathname); }
+          catch { /* persistent cache is optional */ }
+        }
       }
       return value;
     });
@@ -129,9 +144,10 @@ class ReadOnlyProvider {
   }
 }
 
-function createProviders(fetch) {
-  const music = new ReadOnlyProvider('musicbrainz', MB, fetch, 1100, 12 * 60 * 60_000);
-  const listen = new ReadOnlyProvider('listenbrainz', LB, fetch, 350, 30 * 60_000);
+function createProviders(fetch, options = {}) {
+  const persistent = options.cache || null;
+  const music = new ReadOnlyProvider('musicbrainz', MB, fetch, 1100, 12 * 60 * 60_000, persistent, 14 * 24 * 60 * 60_000);
+  const listen = new ReadOnlyProvider('listenbrainz', LB, fetch, 350, 30 * 60_000, persistent, 6 * 60 * 60_000);
   return {
     music: {
       artist(name, signal) {
@@ -143,7 +159,7 @@ function createProviders(fetch) {
       },
       recording(id, signal) {
         return music.get('/recording/' + id, {
-          fmt: 'json', inc: 'artist-credits+releases+release-groups+isrcs',
+          fmt: 'json', inc: 'artist-credits+releases+release-groups+isrcs+genres+tags',
         }, { signal });
       },
     },

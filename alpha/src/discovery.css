@@ -111,3 +111,33 @@
   border-color: var(--teal);
   color: var(--teal);
 }
+.musicGraphStats {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));
+  gap: 4px 18px;
+  margin: 10px 0;
+}
+.musicGraphStats > div {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 10px;
+  border-bottom: 1px solid var(--soft-edge);
+  padding: 4px 0;
+}
+.musicGraphStats dt {
+  color: var(--muted);
+  min-width: 0;
+}
+.musicGraphStats dd {
+  margin: 0;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+  text-align: right;
+}
+.musicGraphMeta {
+  margin: 4px 0;
+}
+#musicGraphSummary:empty, #musicGraphStatus:empty {
+  display: none;
+}

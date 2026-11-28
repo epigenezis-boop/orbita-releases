@@ -18,6 +18,8 @@ const DiscoveryCopy = (() => {
     'credential-storage': ['Не удалось прочитать или сохранить защищённый токен.', 'Could not read or save the encrypted token.'],
     'credential-busy': ['Дождись завершения проверки.', 'Wait until the connection check finishes.'],
     'feedback-storage': ['Не удалось прочитать или сохранить локальные оценки.', 'Could not read or save local feedback.'],
+    'graph-unavailable': ['Музыкальная база недоступна. Подборка работает, но знания не сохраняются.', 'The music graph is unavailable. Recommendations still work, but knowledge is not saved.'],
+    'graph-storage': ['Не удалось сохранить данные в музыкальную базу. Подборка не затронута.', 'Could not save to the music graph. The recommendations are unaffected.'],
     'invalid-seeds': ['Укажи от одного до четырёх разных исполнителей.', 'Choose one to four distinct artists.'],
     'invalid-track': ['Этот вариант больше недоступен. Обнови подборку.', 'This match is no longer available. Refresh the recommendations.'],
     'no-report': ['Сначала получи подборку.', 'Generate recommendations first.'],
@@ -29,7 +31,8 @@ const DiscoveryCopy = (() => {
   function error(value) {
     const [first, second] = String(value).split(':', 2);
     const provider = second && providers[first] ? pair(providers[first], first === 'zvuk' ? 'Zvuk' : providers[first]) : '';
-    const message = pair(...(errors[provider ? second : first] || errors.internal));
+    const code = first === 'graph' ? 'graph-' + second : (provider ? second : first);
+    const message = pair(...(errors[code] || errors.internal));
     return provider ? provider + ' · ' + message : message;
   }
 

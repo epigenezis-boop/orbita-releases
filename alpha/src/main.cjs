@@ -1,9 +1,12 @@
 'use strict';
 const {app,BrowserWindow,ipcMain,session,safeStorage,Menu,Tray,nativeImage,dialog,protocol,net,screen}=require('electron');
 const fs=require('node:fs');const path=require('node:path');const {pathToFileURL}=require('node:url');const {API}=require('./api.cjs');
+const crypto=require('node:crypto');
 const {Discovery}=require('./discovery/service.cjs');
 const {createProviders,DiscoveryError}=require('./discovery/providers.cjs');
 const {createStorage}=require('./discovery/storage.cjs');
+const {openMusicGraph}=require('./graph/index.cjs');
+const {createPlaybackTracker}=require('./graph/playback.cjs');
 // Alpha owns its profile and instance lock independently of the installed stable edition.
 const profileData=path.join(app.getPath('appData'),'orbita-player-alpha');fs.mkdirSync(profileData,{recursive:true});app.setPath('userData',profileData);app.setPath('sessionData',profileData);app.setName('Orbita Alpha');
 if(process.platform==='win32')app.setAppUserModelId('Orbita.Player.Alpha');
@@ -13,7 +16,7 @@ const {LocalLibrary}=require('./local-library.cjs');const {MediaBroker}=require(
 protocol.registerSchemesAsPrivileged([{scheme:'volna-media',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 const diagnostics=new (require('./diagnostics.cjs').Diagnostics)();let localLibrary,media,loudnessStore,playbackStore,streamGeneration=0,streamRequests;
 const authChildren=new Set();
-let updates;let discovery;let settingsWindow;let win,auth,web,api,tray,mini,modes,playerState={paused:true,volume:.7,time:0,duration:0},quitting=false;let lastMiniCover;
+let updates;let discovery;let settingsWindow;let win,auth,web,api,tray,mini,modes,playerState={paused:true,volume:.7,time:0,duration:0},quitting=false;let lastMiniCover;let musicGraph,playbackTracker;
 function sendMiniState(force=false){if(!mini||mini.isDestroyed())return;const packet={...playerState};if(!force&&packet.cover===lastMiniCover)delete packet.cover;else lastMiniCover=packet.cover;mini.webContents.send('widget-state',packet);}
 const widgetUI=pathToFileURL(path.join(__dirname,'widget.html')).href;const ui=pathToFileURL(path.join(__dirname,'index.html')).href;
 const vault=()=>path.join(app.getPath('userData'),'account.bin');
@@ -67,7 +70,7 @@ app.whenReady().then(async()=>{
  modes=installWindowModes(win,mini,{isQuitting:()=>quitting,requestState:()=>{win.webContents.send('state-request');sendMiniState(true);},position:positionWidget});
  handle('widget-get',()=>widgetPrefs.snapshot());
  handle('widget-set',value=>{widgetPrefs.set(value);mini.setAlwaysOnTop(widgetPrefs.value.alwaysOnTop);if(placed)widgetPrefs.saveBounds(mini.getBounds());return widgetPrefs.snapshot();});
- ipcMain.on('player-state',(e,s)=>{if(quitting||win.isDestroyed()||mini.isDestroyed())return;if(e.sender!==win.webContents||e.senderFrame!==win.webContents.mainFrame||e.senderFrame.url!==ui||!s||typeof s!=='object')return;const number=(v,max)=>typeof v==='number'&&Number.isFinite(v)?Math.max(0,Math.min(v,max)):0;const cover=s.cover===undefined?playerState.cover:typeof s.cover==='string'&&s.cover.length<1500000&&(/^(https:\/\/|volna-media:\/\/cover\/[a-f0-9]{64}$|data:image\/(jpeg|png|webp);base64,)/.test(s.cover))?s.cover:'';playerState={trackId:typeof s.trackId==='string'&&/^(?:local-[\w-]+|\d{1,24})$/.test(s.trackId)?s.trackId:'',canLike:s.canLike===true,liked:s.liked===true,likePending:s.likePending===true,title:String(s.title||'').slice(0,500),artist:String(s.artist||'').slice(0,500),paused:!!s.paused,time:number(s.time,1e8),duration:number(s.duration,1e8),volume:number(s.volume,1),cover};if(mini.isVisible())sendMiniState();});
+ ipcMain.on('player-state',(e,s)=>{if(quitting||win.isDestroyed()||mini.isDestroyed())return;if(e.sender!==win.webContents||e.senderFrame!==win.webContents.mainFrame||e.senderFrame.url!==ui||!s||typeof s!=='object')return;const number=(v,max)=>typeof v==='number'&&Number.isFinite(v)?Math.max(0,Math.min(v,max)):0;const cover=s.cover===undefined?playerState.cover:typeof s.cover==='string'&&s.cover.length<1500000&&(/^(https:\/\/|volna-media:\/\/cover\/[a-f0-9]{64}$|data:image\/(jpeg|png|webp);base64,)/.test(s.cover))?s.cover:'';playerState={trackId:typeof s.trackId==='string'&&/^(?:local-[\w-]+|\d{1,24})$/.test(s.trackId)?s.trackId:'',canLike:s.canLike===true,liked:s.liked===true,likePending:s.likePending===true,title:String(s.title||'').slice(0,500),artist:String(s.artist||'').slice(0,500),paused:!!s.paused,time:number(s.time,1e8),duration:number(s.duration,1e8),volume:number(s.volume,1),cover};playbackTracker?.update({...s,trackId:playerState.trackId,title:playerState.title,artist:playerState.artist,paused:playerState.paused,time:playerState.time,duration:playerState.duration});if(mini.isVisible())sendMiniState();});
  ipcMain.on('player-spectrum',(e,levels)=>{if(quitting||win.isDestroyed()||mini.isDestroyed()||!mini.isVisible())return;if(e.sender!==win.webContents||e.senderFrame!==win.webContents.mainFrame||e.senderFrame.url!==ui||!Array.isArray(levels)||levels.length!==24||!levels.every(n=>Number.isInteger(n)&&n>=0&&n<=255))return;mini.webContents.send('widget-spectrum',levels);});
  ipcMain.on('widget-action',(e,p)=>{if(quitting||win.isDestroyed()||mini.isDestroyed())return;if(e.sender!==mini.webContents||e.senderFrame!==mini.webContents.mainFrame||e.senderFrame.url!==widgetUI||!p)return;if(p.action==='expand'){modes.showMain();return;}if(p.action==='hide'){modes.hideAll();return;}if(p.action==='like'){if(playerState.canLike&&!playerState.likePending&&p.value===playerState.trackId)win.webContents.send('media',{action:'like',trackId:p.value});return;}if(['toggle','prev','next'].includes(p.action))win.webContents.send('media',{action:p.action});else if(['seek','volume'].includes(p.action)&&typeof p.value==='number'&&Number.isFinite(p.value)&&p.value>=0&&p.value<=1)win.webContents.send('media',{action:p.action,value:p.value});});
  mini.webContents.on('did-finish-load',()=>{sendMiniState(true);mini.webContents.send('theme',theme);});
@@ -94,7 +97,7 @@ app.whenReady().then(async()=>{
  handle('quality-get',()=>preferredQuality);handle('quality-set',q=>{if(!['hifi','high','mid'].includes(q))throw Error(i18n.t('Неизвестное качество'));fs.writeFileSync(qualityFile,JSON.stringify({quality:q}));preferredQuality=q;win.webContents.send('quality',q);return q;});
  handle('normalization-get',()=>loudnessStore.enabled);handle('normalization-set',value=>{const enabled=loudnessStore.setEnabled(value);win.webContents.send('normalization',enabled);return enabled;});
  handle('loudness-info',id=>loudnessStore.info(id));handle('loudness-local',id=>{const info=loudnessStore.info(id);if(!info?.eligible||!id.startsWith('local-'))throw Error(i18n.t('Файл недоступен для анализа'));return media.local(id);});handle('loudness-save',(id,stamp,p,complete)=>loudnessStore.put(id,stamp,p,complete));
- handle('like-track',(id,liked)=>api.likeTrack(id,liked));
+ handle('like-track',async(id,liked)=>{const result=await api.likeTrack(id,liked);try{const current=String(playerState.trackId||'')===String(id);musicGraph?.recordFavorite({id,title:current?playerState.title:'',artist:current?playerState.artist:''},liked);}catch{}return result;});
  handle('auth-open' ,()=>authWindow());
  accountSession=new (require('./account-session.cjs').AccountSession)({api,stored,save,resume:()=>transport.resume(),changed:()=>{discovery.accountChanged();win.webContents.send('account-changed');},clear:async()=>{streamRequests.cancelPending();streamGeneration++;media.stopRemote();api.token=null;streamRequests.unblock();for(const child of authChildren)if(!child.isDestroyed())child.close();if(auth)auth.close();await web.closeAllConnections();await web.clearStorageData();siteIdentity.clear();fs.rmSync(vault(),{force:true});}});
  handle('connect',async(token)=>{if(token!==undefined&&(typeof token!=='string'||token.length<10||token.length>4096||/[\r\n]/.test(token)))throw new Error(i18n.t('Неверный формат токена'));diagnostics.add('account-operation',{stage:token===undefined?'connect-site':'connect-manual'});const p=await accountSession.connect(token);if(auth)auth.close();return p;});
@@ -104,18 +107,38 @@ app.whenReady().then(async()=>{
  handle('local-list',()=>localLibrary.list());handle('local-stream',id=>{streamRequests.cancelPending();streamGeneration++;media.stopRemote();return media.local(id);});handle('local-remove',id=>{if(typeof id!=='string')throw Error(i18n.t('Некорректный трек'));return localLibrary.remove(id);});
  handle('local-add',async(kind)=>{if(!['files','folder'].includes(kind))throw Error(i18n.t('Некорректный выбор'));if(localLibrary.busy)throw Error(i18n.t('Дождитесь завершения добавления.'));const result=await dialog.showOpenDialog(win,{title:kind==='folder'?i18n.t('Выберите папку с музыкой'):i18n.t('Выберите аудиофайлы'),properties:kind==='folder'?['openDirectory']:['openFile','multiSelections'],filters:kind==='files'?[{name:i18n.t('Музыка'),extensions:['mp3','flac','wav','ogg','opus','m4a','aac','webm']}]:[]});if(result.canceled)return null;return localLibrary.add(result.filePaths);});
 });
-app.on('before-quit',()=>{updates?.stop();discovery?.cancel();try{playbackStore?.finish(playerState);}catch{}quitting=true;});app.on('window-all-closed',()=>app.quit());
+app.on('before-quit',()=>{updates?.stop();discovery?.cancel();playbackTracker?.stop();try{playbackStore?.finish(playerState);}catch{}try{musicGraph?.close();}catch{}quitting=true;});app.on('window-all-closed',()=>app.quit());
 
 }
 
 function registerDiscovery() {
  const network = session.fromPartition('discovery-readonly');
+ try {
+  musicGraph = openMusicGraph({
+   profileDir: profileData,
+   legacyFeedbackFile: path.join(profileData, 'discovery-feedback.json'),
+   diagnostics,
+  });
+ } catch (error) {
+  diagnostics.add('music-graph', { stage: 'initialization-failed', code: String(error?.code || 'internal') });
+  musicGraph = null;
+ }
+ playbackTracker = createPlaybackTracker((event) => { musicGraph?.recordPlayback(event); });
+ const catalogScope = () => {
+  const profile = accountSession?.profile;
+  const identity = profile?.id ?? profile?.user_id ?? profile?.userId ?? profile?.username;
+  if (identity === undefined || identity === null || identity === '') return 'anonymous';
+  return crypto.createHash('sha256').update(String(identity)).digest('hex').slice(0, 24);
+ };
  discovery = new Discovery({
-  providers: createProviders(network.fetch.bind(network)),
+  providers: createProviders(network.fetch.bind(network), { cache: musicGraph?.cache }),
   storage: createStorage(profileData, safeStorage),
   connected: () => Boolean(accountSession?.profile && api.token),
   searchZvuk: async (query, signal) => (await api.search(query, null, signal)).tracks,
   progress: (value) => { if (win && !win.isDestroyed()) win.webContents.send('discovery-progress', value); },
+  graph: musicGraph,
+  cache: musicGraph?.cache,
+  catalogScope,
  });
  handle('discovery-identify', names => discovery.identify(names), 'main');
  handle('discovery-recommend', (ids, mode, count) => discovery.recommend(ids, mode, count), 'main');
@@ -132,4 +155,11 @@ function registerDiscovery() {
  for (const action of ['info', 'save', 'check', 'remove']) {
   handle('discovery-token-' + action, value => discovery.credential(action, value), 'settings');
  }
+ handle('music-graph-stats', () => musicGraph ? musicGraph.stats() : {
+  available: false, schemaVersion: 0, file: 'music-graph.sqlite', dbSizeBytes: 0,
+  counts: { artists: 0, recordings: 0, releaseGroups: 0, releases: 0, releaseTracks: 0, tags: 0, relations: 0, mappings: 0, ratings: 0, events: 0 },
+  cache: { hits: 0, misses: 0, writes: 0, evictions: 0, entries: 0 },
+  lastUpdated: null, recovered: false, error: 'graph-unavailable',
+ }, 'settings');
+ handle('music-graph-clear-cache', () => musicGraph ? musicGraph.clearCache() : { cleared: 0, error: 'graph-unavailable' }, 'settings');
 }

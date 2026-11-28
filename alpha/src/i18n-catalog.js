@@ -417,5 +417,15 @@
   "СПОКОЙНОЕ": "CALM",
   "Настроение музыки": "Music mood",
   "Перетащи точку или используй стрелки на клавиатуре.": "Drag the dot or use the arrow keys.",
-  "Применить и перезапустить": "Apply and restart"
+  "Применить и перезапустить": "Apply and restart",
+  "Музыкальная база": "Music graph",
+  "Исполнители": "Artists",
+  "Записи": "Recordings",
+  "Издания": "Releases",
+  "Связи": "Relations",
+  "Сопоставления со Звуком": "Zvuk matches",
+  "Пользовательские события": "User events",
+  "Размер базы": "Database size",
+  "Обновить": "Refresh",
+  "Очистить кэш": "Clear cache"
 });

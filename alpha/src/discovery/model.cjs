@@ -118,13 +118,19 @@ function recording(raw, candidate) {
       country: text(entry.country),
     });
   }
-  return {
+  const result = {
     id, title, kind: 'recording', disambiguation: text(raw.disambiguation),
     artistCredit: artists.map((a) => a.credit + a.joinPhrase).join('') || candidate.artistName,
     artists, durationMs: Number.isFinite(raw.length) && raw.length > 0 ? raw.length : null,
     isrcs: [...new Set(array(raw.isrcs).map(isrc).filter(Boolean))],
     releases, releaseGroups: [...releaseGroups.values()],
   };
+  const genres = [...new Set(array(raw.genres).map((entry) => text(entry?.name)).filter(Boolean))].slice(0, 40);
+  const tags = [...new Set(array(raw.tags).map((entry) => text(entry?.name)).filter(Boolean))].slice(0, 40);
+  // Keep the Alpha.1 report shape when the provider returns no classification.
+  if (genres.length) result.genres = genres;
+  if (tags.length) result.tags = tags;
+  return result;
 }
 
 const versions = [
