@@ -148,7 +148,8 @@ class GraphRepository {
     if (!title) return null;
     const titleKey = normalizeKey(title);
     const primaryType = text(value?.primaryType || value?.primary_type);
-    const secondary = JSON.stringify(Array.isArray(value?.secondaryTypes) ? value.secondaryTypes.map(text).filter(Boolean) : []);
+    const secondary = Array.isArray(value?.secondaryTypes)
+      ? JSON.stringify(value.secondaryTypes.map(text).filter(Boolean)) : null;
     const firstDate = text(value?.firstReleaseDate || value?.first_release_date);
     const at = this.now();
     let row = id ? this.sql('SELECT id FROM release_group WHERE mbid = ?').get(id) : null;
@@ -159,13 +160,14 @@ class GraphRepository {
     }
     if (row) {
       this.sql(`UPDATE release_group SET title = ?, title_key = ?, primary_type = ?,
-        secondary_types = ?, first_release_date = COALESCE(NULLIF(?, ''), first_release_date), updated_at = ?
+        secondary_types = COALESCE(?, secondary_types),
+        first_release_date = COALESCE(NULLIF(?, ''), first_release_date), updated_at = ?
         WHERE id = ?`).run(title, titleKey, primaryType, secondary, firstDate, at, row.id);
       return row.id;
     }
     const result = this.sql(`INSERT INTO release_group(mbid, title, title_key, primary_type, secondary_types,
       first_release_date, created_at, updated_at) VALUES(?, ?, ?, ?, ?, ?, ?, ?)`)
-      .run(id, title, titleKey, primaryType, secondary, firstDate, at, at);
+      .run(id, title, titleKey, primaryType, secondary ?? '[]', firstDate, at, at);
     return Number(result.lastInsertRowid);
   }
 
@@ -216,14 +218,18 @@ class GraphRepository {
     return result?.id ?? null;
   }
 
-  upsertTag(name) {
+  upsertTag(name, kind = '') {
     const label = text(name);
     if (!label) return null;
     const key = normalizeKey(label);
     if (!key) return null;
-    const row = this.sql('SELECT id FROM tag WHERE name_key = ?').get(key);
-    if (row) return row.id;
-    const result = this.sql('INSERT INTO tag(name, name_key) VALUES(?, ?)').run(label, key);
+    const row = this.sql('SELECT id, kind FROM tag WHERE name_key = ?').get(key);
+    if (row) {
+      if (kind && !row.kind) this.sql('UPDATE tag SET kind = ? WHERE id = ?').run(text(kind), row.id);
+      return row.id;
+    }
+    const result = this.sql('INSERT INTO tag(name, name_key, kind) VALUES(?, ?, ?)')
+      .run(label, key, text(kind));
     return Number(result.lastInsertRowid);
   }
 
@@ -251,8 +257,8 @@ class GraphRepository {
     return id;
   }
 
-  tagEntity({ entityType, entityId, name, source, basis = '', confidence = '' }) {
-    const tagId = this.upsertTag(name);
+  tagEntity({ entityType, entityId, name, source, basis = '', confidence = '', kind = '' }) {
+    const tagId = this.upsertTag(name, kind);
     if (!tagId || !entityType || !entityId || !source) return false;
     const at = this.now();
     this.sql(`INSERT INTO entity_tag(entity_type, entity_id, tag_id, source, basis, confidence,
@@ -265,29 +271,47 @@ class GraphRepository {
     return true;
   }
 
-  mapProvider({ entityType, entityId, provider, providerId, parentId = '', basis = '', confidence = '', evidenceKey }) {
+  mapProvider({ entityType, entityId, provider, providerId, parentId = '', basis = '', confidence = '', evidenceKey, force = false }) {
     if (!entityType || !entityId || !provider || !providerId) return null;
     const at = this.now();
+    const incoming = confidenceLabel(confidence);
+    const incomingRank = CONFIDENCE_RANK[incoming];
     const identity = this.sql(`SELECT id, entity_id, confidence FROM provider_mapping
       WHERE entity_type = ? AND provider = ? AND provider_id = ?`)
       .get(entityType, provider, providerId);
     let id;
+    let storedEntityId = entityId;
+    let addEvidence = true;
     if (identity) {
-      const strongest = CONFIDENCE_RANK[confidenceLabel(confidence)] >= CONFIDENCE_RANK[identity.confidence]
-        ? confidenceLabel(confidence) : identity.confidence;
-      this.sql(`UPDATE provider_mapping SET entity_id = ?, last_confirmed_at = ?,
-        basis = CASE WHEN ? <> '' THEN ? ELSE basis END,
-        confidence = ?, provider_parent_id = COALESCE(NULLIF(?, ''), provider_parent_id) WHERE id = ?`)
-        .run(entityId, at, text(basis), text(basis), strongest, text(parentId), identity.id);
       id = identity.id;
+      const sameTarget = identity.entity_id === entityId;
+      if (!sameTarget && !force && incomingRank <= CONFIDENCE_RANK[identity.confidence]) {
+        // Never let an automatic report move a user-confirmed or stronger mapping.
+        this.sql('UPDATE provider_mapping SET last_confirmed_at = ? WHERE id = ?').run(at, id);
+        storedEntityId = identity.entity_id;
+        addEvidence = false;
+      } else if (!sameTarget) {
+        // A strictly stronger identity (for example identifier over metadata) may correct it.
+        this.sql(`UPDATE provider_mapping SET entity_id = ?, last_confirmed_at = ?,
+          basis = ?, confidence = ?, provider_parent_id = COALESCE(NULLIF(?, ''), provider_parent_id),
+          confirmations = 1 WHERE id = ?`)
+          .run(entityId, at, text(basis), incoming, text(parentId), id);
+        this.sql('DELETE FROM mapping_evidence WHERE mapping_id = ?').run(id);
+      } else {
+        const strongest = incomingRank >= CONFIDENCE_RANK[identity.confidence] ? incoming : identity.confidence;
+        this.sql(`UPDATE provider_mapping SET last_confirmed_at = ?,
+          basis = CASE WHEN ? <> '' THEN ? ELSE basis END,
+          confidence = ?, provider_parent_id = COALESCE(NULLIF(?, ''), provider_parent_id) WHERE id = ?`)
+          .run(at, text(basis), text(basis), strongest, text(parentId), id);
+      }
     } else {
       id = Number(this.sql(`INSERT INTO provider_mapping(entity_type, entity_id, provider, provider_id,
         provider_parent_id, basis, confidence, created_at, last_confirmed_at, confirmations)
         VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, 1)`)
         .run(entityType, entityId, provider, providerId, text(parentId), text(basis),
-          confidenceLabel(confidence), at, at).lastInsertRowid);
+          incoming, at, at).lastInsertRowid);
     }
-    if (id && evidenceKey) {
+    if (id && evidenceKey && addEvidence) {
       const changed = this.sql(`INSERT OR IGNORE INTO mapping_evidence(mapping_id, evidence_key, observed_at)
         VALUES(?, ?, ?)`).run(id, text(evidenceKey).slice(0, 300), at).changes;
       if (changed) {
@@ -299,7 +323,7 @@ class GraphRepository {
       // Link or re-point events when a catalog mapping is created or corrected.
       this.sql(`UPDATE user_event SET recording_id = ?, entity_id = ?
         WHERE provider = ? AND provider_track_id = ?`)
-        .run(entityId, entityId, provider, providerId);
+        .run(storedEntityId, storedEntityId, provider, providerId);
     }
     return id;
   }
@@ -399,8 +423,8 @@ class GraphRepository {
 
         for (const tag of arrayOfTags(metadata)) {
           if (this.tagEntity({
-            entityType: 'recording', entityId: recordingId, name: tag, source: 'musicbrainz',
-            basis: 'metadata', confidence: 'tagged',
+            entityType: 'recording', entityId: recordingId, name: tag.name, kind: tag.kind,
+            source: 'musicbrainz', basis: 'metadata', confidence: 'tagged',
           })) links++;
         }
 
@@ -493,10 +517,16 @@ class GraphRepository {
     this.database.transaction(() => {
       const recordingId = this.ensureRecording(id);
       if (!recordingId) return;
-      stored = this.rate({
-        entityType: 'recording', entityId: recordingId, source: 'discovery',
-        value: vote === 'like' ? 1 : vote === 'dislike' ? -1 : 0,
-      });
+      if (vote === 'like' || vote === 'dislike') {
+        stored = this.rate({
+          entityType: 'recording', entityId: recordingId, source: 'discovery',
+          value: vote === 'like' ? 1 : -1,
+        });
+      } else {
+        // Clearing a vote must also remove the migrated Alpha.1 legacy rating.
+        stored = this.rate({ entityType: 'recording', entityId: recordingId, source: 'discovery', value: 0 });
+        this.rate({ entityType: 'recording', entityId: recordingId, source: 'discovery-legacy', value: 0 });
+      }
       this.touch();
     });
     return stored;
@@ -513,6 +543,7 @@ class GraphRepository {
         entityType: 'recording', entityId: recordingId, provider: 'zvuk',
         providerId: String(track.id), parentId: track.albumId ? String(track.albumId) : '',
         basis: 'manual-choice', confidence: 'confirmed', evidenceKey: 'choice:' + String(track.id),
+        force: true,
       }));
       this.touch();
     });
@@ -530,7 +561,8 @@ class GraphRepository {
         type: value.type, entityType: 'recording', entityId: mapping?.entity_id,
         recordingId: mapping?.entity_id, provider, providerTrackId: value.trackId,
         positionMs: value.positionMs, durationMs: value.durationMs, playedMs: value.playedMs,
-        detail: { title: text(value.title), artist: text(value.artist) },
+        detail: { ...(value.detail && typeof value.detail === 'object' ? value.detail : {}),
+          title: text(value.title), artist: text(value.artist) },
         dedupeKey: value.dedupeKey,
       }));
       if (stored) this.touch();
@@ -540,14 +572,15 @@ class GraphRepository {
 
   recordFavorite(track, liked) {
     if (!track?.id) return false;
+    const provider = String(track.id).startsWith('local-') ? 'local' : 'zvuk';
     let stored = false;
     this.database.transaction(() => {
-      const mapping = this.findMapping('recording', 'zvuk', String(track.id));
+      const mapping = this.findMapping('recording', provider, String(track.id));
       stored = Boolean(this.event({
         type: liked ? 'like' : 'unlike', entityType: 'recording', entityId: mapping?.entity_id,
-        recordingId: mapping?.entity_id, provider: 'zvuk', providerTrackId: String(track.id),
+        recordingId: mapping?.entity_id, provider, providerTrackId: String(track.id),
         detail: { title: text(track.title), artist: text(track.artist), via: 'favorite' },
-        dedupeKey: `favorite:${track.id}:${liked ? 1 : 0}:${Math.floor(Date.now() / 1000)}`,
+        dedupeKey: `favorite:${provider}:${track.id}:${liked ? 1 : 0}:${Math.floor(Date.now() / 1000)}`,
       }));
       if (mapping?.entity_id) {
         this.rate({
@@ -603,14 +636,14 @@ class GraphRepository {
 }
 
 function arrayOfTags(metadata) {
-  const values = [];
-  for (const source of [metadata?.tags, metadata?.genres]) {
+  const values = new Map();
+  for (const [source, kind] of [[metadata?.genres, 'genre'], [metadata?.tags, 'tag']]) {
     for (const entry of Array.isArray(source) ? source : []) {
       const name = typeof entry === 'string' ? entry : entry?.name;
-      if (name) values.push(name);
+      if (name) values.set(kind + '\u0000' + name, { name, kind });
     }
   }
-  return [...new Set(values)];
+  return [...values.values()];
 }
 
 function numberOrNull(value) {

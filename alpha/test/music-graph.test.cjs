@@ -88,6 +88,9 @@ test('graph persists entities, links, ratings, mappings and survives restart wit
   reopened.close();
   const check = openGraphDatabase(path.join(profile, 'music-graph.sqlite'));
   assert.equal(check.prepare('SELECT title FROM recording WHERE mbid = ?').get(recordingId).title, 'Crownless');
+  const kinds = Object.fromEntries(check.prepare('SELECT name, kind FROM tag').all().map((row) => [row.name, row.kind]));
+  assert.equal(kinds['Symphonic Metal'], 'genre');
+  assert.equal(kinds['female vocals'], 'tag');
   check.close();
 });
 
@@ -166,6 +169,85 @@ test('a provider track maps to one recording and backfills earlier events', (t) 
   database.close();
 });
 
+test('playback dedupe keys stay unique across tracker and database restarts', (t) => {
+  const { profile, graph: initial } = seededGraph(t);
+  initial.close();
+  let graph = openMusicGraph({ profileDir: profile });
+  let tracker = createPlaybackTracker((event) => graph.recordPlayback(event));
+  tracker.update({ trackId: '83', title: 'Crownless', artist: 'Nightwish', paused: false, time: 0, duration: 200 });
+  tracker.stop();
+  assert.equal(graph.stats().counts.events, 1);
+  graph.close();
+
+  graph = openMusicGraph({ profileDir: profile });
+  tracker = createPlaybackTracker((event) => graph.recordPlayback(event));
+  tracker.update({ trackId: '83', title: 'Crownless', artist: 'Nightwish', paused: false, time: 0, duration: 200 });
+  tracker.stop();
+  assert.equal(graph.stats().counts.events, 2, 'the new process must not collide with old keys');
+  graph.close();
+});
+
+test('automatic reports cannot move a confirmed or stronger provider mapping', (t) => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'orbita-graph-rank-'));
+  t.after(() => rmSync(profile, { recursive: true, force: true }));
+  const database = openGraphDatabase(path.join(profile, 'music-graph.sqlite'));
+  const repository = new GraphRepository(database);
+  const first = repository.upsertRecording({ mbid: recordingId, title: 'Crownless' });
+  const secondId = '0b6ad0ba-2ef2-4d1f-9dee-0ca2f1d5c7cc';
+  const second = repository.upsertRecording({ mbid: secondId, title: 'Second' });
+
+  repository.mapProvider({ entityType: 'recording', entityId: first, provider: 'zvuk',
+    providerId: '83', basis: 'catalog-track', confidence: 'metadata', evidenceKey: 'report-a' });
+  repository.recordChoice(recordingId, { id: '83' });
+  assert.equal(repository.findMapping('recording', 'zvuk', '83').confidence, 'confirmed');
+  repository.mapProvider({ entityType: 'recording', entityId: second, provider: 'zvuk',
+    providerId: '83', basis: 'catalog-track', confidence: 'metadata', evidenceKey: 'report-b' });
+  const kept = repository.findMapping('recording', 'zvuk', '83');
+  assert.equal(kept.entity_id, first, 'confirmed mapping must not move to an automatic metadata match');
+  assert.equal(kept.confidence, 'confirmed');
+
+  // A strictly stronger identifier match may correct an older metadata mapping.
+  repository.mapProvider({ entityType: 'recording', entityId: first, provider: 'zvuk',
+    providerId: '84', basis: 'catalog-track', confidence: 'metadata', evidenceKey: 'report-c' });
+  repository.mapProvider({ entityType: 'recording', entityId: second, provider: 'zvuk',
+    providerId: '84', basis: 'catalog-track', confidence: 'identifier', evidenceKey: 'identifier-c' });
+  const corrected = repository.findMapping('recording', 'zvuk', '84');
+  assert.equal(corrected.entity_id, second);
+  assert.equal(corrected.confidence, 'identifier');
+  assert.equal(database.prepare('SELECT confirmations FROM provider_mapping WHERE id = ?').get(corrected.id).confirmations, 1);
+
+  // An explicit user choice is allowed to replace an earlier confirmed mapping.
+  repository.mapProvider({ entityType: 'recording', entityId: first, provider: 'zvuk',
+    providerId: '85', basis: 'manual-choice', confidence: 'confirmed', evidenceKey: 'choice-old' });
+  repository.mapProvider({ entityType: 'recording', entityId: second, provider: 'zvuk',
+    providerId: '85', basis: 'manual-choice', confidence: 'confirmed', evidenceKey: 'choice-new', force: true });
+  assert.equal(repository.findMapping('recording', 'zvuk', '85').entity_id, second);
+  database.close();
+});
+
+test('clearing a Discovery vote also clears its migrated legacy rating', (t) => {
+  const profile = mkdtempSync(path.join(tmpdir(), 'orbita-graph-unvote-'));
+  t.after(() => rmSync(profile, { recursive: true, force: true }));
+  const database = openGraphDatabase(path.join(profile, 'music-graph.sqlite'));
+  const repository = new GraphRepository(database);
+  assert.equal(repository.importVotes({ [recordingId]: 'like' }), 1);
+  assert.equal(repository.counts().ratings, 1);
+  repository.recordVote(recordingId, null);
+  assert.equal(repository.counts().ratings, 0);
+  assert.equal(database.prepare("SELECT count(*) AS n FROM rating WHERE source = 'discovery-legacy'").get().n, 0);
+  database.close();
+});
+
+test('local favorites are recorded with the local provider', (t) => {
+  const { profile, graph } = seededGraph(t);
+  graph.recordFavorite({ id: 'local-abc', title: 'Local tone', artist: 'Local' }, true);
+  graph.close();
+  const database = openGraphDatabase(path.join(profile, 'music-graph.sqlite'));
+  const event = database.prepare('SELECT provider, provider_track_id, type FROM user_event').get();
+  assert.deepEqual({ ...event }, { provider: 'local', provider_track_id: 'local-abc', type: 'like' });
+  database.close();
+});
+
 test('playback events are factual: start, completion, early skip and replay, never shutdown', () => {
   const events = [];
   const tracker = createPlaybackTracker((event) => events.push(event));
@@ -193,16 +275,28 @@ test('playback events are factual: start, completion, early skip and replay, nev
   const seekEvents = [];
   const seekTracker = createPlaybackTracker((event) => seekEvents.push(event));
   seekTracker.update({ trackId: '90', paused: false, time: 0, duration: 300 });
+  seekTracker.update({ trackId: '90', paused: false, time: 2, duration: 300 });
   seekTracker.update({ trackId: '90', paused: false, time: 180, duration: 300 });
   seekTracker.update({ trackId: '90', paused: false, time: 10, duration: 300 });
   seekTracker.update({ trackId: '90', paused: false, time: 120, duration: 300 });
   assert.deepEqual(seekEvents.map((event) => event.type), ['play']);
+  assert.ok(seekTracker.current.listened < 0.001, 'small and large seeks are not listened time');
 
   const shortEvents = [];
   const shortTracker = createPlaybackTracker((event) => shortEvents.push(event));
   shortTracker.update({ trackId: '91', paused: false, time: 0, duration: 300 });
   shortTracker.update({ trackId: '92', paused: false, time: 0, duration: 300 });
   assert.deepEqual(shortEvents.map((event) => event.type), ['play', 'play']);
+
+  const errorEvents = [];
+  const errorTracker = createPlaybackTracker((event) => errorEvents.push(event));
+  errorTracker.update({ trackId: '93', paused: false, time: 0, duration: 300 });
+  for (let time = 0.5; time <= 5; time += 0.5) {
+    errorTracker.update({ trackId: '93', paused: false, time, duration: 300 });
+  }
+  errorTracker.invalidate();
+  errorTracker.update({ trackId: '94', paused: false, time: 0, duration: 300 });
+  assert.deepEqual(errorEvents.map((event) => event.type), ['play', 'play']);
 });
 
 test('persistent provider cache serves public responses across instances and never stores tokens', async (t) => {

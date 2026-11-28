@@ -22,7 +22,7 @@ added.
 `%APPDATA%\orbita-player-alpha\music-graph.sqlite` (the isolated Alpha profile).
 The stable profile `%APPDATA%\volna-player` is never touched.
 
-## Schema v1
+## Schema v2
 
 Timestamps are ISO-8601 UTC strings. Internal entity identifiers are SQLite
 `INTEGER PRIMARY KEY` values and remain stable. MBIDs are optional (`UNIQUE`
@@ -90,7 +90,8 @@ release_track(
   UNIQUE (release_id, medium_position, track_position)
 );
 
-tag(id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE);
+tag(id INTEGER PRIMARY KEY, name TEXT NOT NULL, name_key TEXT NOT NULL UNIQUE,
+    kind TEXT NOT NULL DEFAULT '');
 
 relation(
   id INTEGER PRIMARY KEY,
@@ -184,6 +185,11 @@ cache_stats(
 `BEGIN IMMEDIATE`; a copy of the database is made before a forward migration.
 `journal_mode=WAL`, `synchronous=NORMAL`, `foreign_keys=ON`,
 `busy_timeout=3000`. The WAL is checkpointed and the handle closed on quit.
+
+Schema v2 adds the provider-track identity index, the user-event provider
+index, and the `tag.kind` column (`genre` or `tag`). Databases created by an
+early Alpha.2 build are upgraded automatically, with duplicate provider
+mappings collapsed to the strongest row first.
 
 Allowed `confidence` labels (no invented similarity coefficients):
 `identifier`, `metadata`, `confirmed`, `reported`, `tagged`. For recommendation

@@ -7,7 +7,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { DatabaseSync } = require('node:sqlite');
 const { openGraphDatabase } = require('../src/graph/database.cjs');
-const { SCHEMA_VERSION } = require('../src/graph/schema.cjs');
+const { SCHEMA_VERSION, migrations } = require('../src/graph/schema.cjs');
 
 const TABLES = [
   'artist',
@@ -58,7 +58,7 @@ function count(db, table) {
   return db.prepare('SELECT count(*) AS n FROM ' + table).get().n;
 }
 
-test('creates schema v1 with WAL, foreign keys and MBID rules', () => {
+test('creates schema v2 with WAL, foreign keys and MBID rules', () => {
   const directory = makeDirectory();
   const file = path.join(directory, 'music-graph.sqlite');
   let db;
@@ -72,9 +72,11 @@ test('creates schema v1 with WAL, foreign keys and MBID rules', () => {
     assert.equal(db.path, path.resolve(file));
     assert.ok(db.raw);
     assert.equal(db.prepare('PRAGMA journal_mode').get().journal_mode, 'wal');
-    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 1);
+    assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
     assert.equal(db.prepare('PRAGMA foreign_keys').get().foreign_keys, 1);
     assert.equal(db.integrityCheck(), true);
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'provider_mapping_recording_identity'").get());
+    assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'user_event_provider'").get());
 
     const tables = tableNames(db);
     for (const name of TABLES) {
@@ -118,12 +120,12 @@ test('migrations are idempotent on reopen', () => {
       assert.equal(second.status.available, true);
       assert.equal(second.status.created, false);
       assert.equal(second.status.recovered, false);
-      assert.equal(second.status.schemaVersion, 1);
-      assert.equal(second.prepare('PRAGMA user_version').get().user_version, 1);
-      assert.equal(count(second, 'schema_migrations'), 1);
+      assert.equal(second.status.schemaVersion, 2);
+      assert.equal(second.prepare('PRAGMA user_version').get().user_version, 2);
+      assert.equal(count(second, 'schema_migrations'), 2);
       const versions = second.prepare('SELECT version FROM schema_migrations ORDER BY version')
         .all().map((row) => row.version);
-      assert.deepEqual(versions, [1]);
+      assert.deepEqual(versions, [1, 2]);
       assert.equal(second.prepare('SELECT value FROM graph_meta WHERE key = ?').get('seed').value, 'one');
     } finally {
       second.close();
@@ -185,14 +187,14 @@ test('corrupt database is quarantined and replaced without touching neighbours',
     try {
       assert.equal(db.status.available, true);
       assert.equal(db.status.recovered, true);
-      assert.equal(db.status.schemaVersion, 1);
+      assert.equal(db.status.schemaVersion, 2);
       assert.equal(db.status.error, null);
       assert.equal(db.integrityCheck(), true);
       for (const name of TABLES) {
         assert.ok(tableNames(db).includes(name), 'missing fresh table ' + name);
       }
       assert.equal(count(db, 'artist'), 0);
-      assert.equal(count(db, 'schema_migrations'), 1);
+      assert.equal(count(db, 'schema_migrations'), 2);
 
       const quarantined = fs.readdirSync(directory).filter((name) => name.includes('.corrupt-'));
       assert.equal(quarantined.length, 1);
@@ -236,7 +238,7 @@ test('a database from a newer schema is refused without modification', () => {
     const verify = new DatabaseSync(file);
     try {
       assert.equal(verify.prepare('PRAGMA user_version').get().user_version, 99);
-      assert.equal(verify.prepare('SELECT count(*) AS n FROM schema_migrations').get().n, 1);
+      assert.equal(verify.prepare('SELECT count(*) AS n FROM schema_migrations').get().n, 2);
       assert.equal(verify.prepare('SELECT value FROM graph_meta WHERE key = ?').get('marker').value, 'kept');
       assert.equal(verify.prepare(
         "SELECT count(*) AS n FROM sqlite_master WHERE type = 'table' AND name = 'artist'"
@@ -253,35 +255,37 @@ test('a pending migration keeps exactly one backup of the existing file', () => 
   const directory = makeDirectory();
   const file = path.join(directory, 'music-graph.sqlite');
   try {
-    const first = openGraphDatabase(file);
-    first.prepare('INSERT INTO graph_meta (key, value, updated_at) VALUES (?, ?, ?)')
-      .run('before-upgrade', 'kept', NOW);
-    first.close();
-
     const raw = new DatabaseSync(file);
-    raw.exec('PRAGMA user_version = 0');
+    raw.exec('PRAGMA journal_mode = WAL');
+    raw.exec(migrations[0].sql);
+    raw.prepare('INSERT INTO schema_migrations (version, applied_at) VALUES (?, ?)').run(1, NOW);
+    raw.prepare('INSERT INTO graph_meta (key, value, updated_at) VALUES (?, ?, ?)')
+      .run('before-upgrade', 'kept', NOW);
+    raw.exec('PRAGMA user_version = 1');
     raw.close();
     fs.writeFileSync(path.join(directory, 'music-graph.backup-v9.sqlite'), 'stale backup');
 
     const db = openGraphDatabase(file);
     try {
       assert.equal(db.status.available, true);
-      assert.equal(db.status.schemaVersion, 1);
-      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 1);
+      assert.equal(db.status.schemaVersion, 2);
+      assert.equal(db.prepare('PRAGMA user_version').get().user_version, 2);
+      assert.equal(count(db, 'schema_migrations'), 2);
       assert.equal(
         db.prepare('SELECT value FROM graph_meta WHERE key = ?').get('before-upgrade').value,
         'kept'
       );
+      assert.ok(db.prepare("SELECT name FROM sqlite_master WHERE type = 'index' AND name = 'provider_mapping_recording_identity'").get());
     } finally {
       db.close();
     }
 
     const backups = fs.readdirSync(directory).filter((name) => name.includes('.backup-v'));
-    assert.deepEqual(backups.sort(), ['music-graph.backup-v0.sqlite']);
+    assert.deepEqual(backups.sort(), ['music-graph.backup-v1.sqlite']);
 
     const backup = new DatabaseSync(path.join(directory, backups[0]));
     try {
-      assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 0);
+      assert.equal(backup.prepare('PRAGMA user_version').get().user_version, 1);
       assert.equal(backup.prepare('SELECT count(*) AS n FROM graph_meta').get().n, 1);
     } finally {
       backup.close();

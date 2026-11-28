@@ -275,8 +275,8 @@ function openMusicGraph({ profileDir, legacyFeedbackFile, diagnostics, file }) {
     stats() {
       if (!available) {
         return {
-          available: false, schemaVersion: 0, file: path.basename(target), dbSizeBytes: 0,
-          counts: emptyCounts(), cache: emptyCache(), lastUpdated: null, recovered: false, error,
+          available: false, schemaVersion, file: path.basename(target), dbSizeBytes: 0,
+          counts: emptyCounts(), cache: emptyCache(), lastUpdated: null, recovered, error,
         };
       }
       try {

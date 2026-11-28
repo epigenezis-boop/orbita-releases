@@ -4,7 +4,7 @@
 // inside a single transaction by database.cjs; `PRAGMA user_version` mirrors the
 // highest applied version. No user data may be interpolated into this SQL.
 
-const SCHEMA_VERSION = 1;
+const SCHEMA_VERSION = 2;
 
 const migrations = [
   {
@@ -174,8 +174,6 @@ CREATE TABLE IF NOT EXISTS provider_mapping (
 
 CREATE INDEX IF NOT EXISTS provider_mapping_lookup
   ON provider_mapping(provider, provider_id, entity_type);
-CREATE UNIQUE INDEX IF NOT EXISTS provider_mapping_recording_identity
-  ON provider_mapping(provider, provider_id) WHERE entity_type = 'recording';
 
 CREATE TABLE IF NOT EXISTS mapping_evidence (
   mapping_id INTEGER NOT NULL REFERENCES provider_mapping(id) ON DELETE CASCADE,
@@ -212,8 +210,6 @@ CREATE TABLE IF NOT EXISTS user_event (
 
 CREATE INDEX IF NOT EXISTS user_event_recording
   ON user_event(recording_id, created_at);
-CREATE INDEX IF NOT EXISTS user_event_provider
-  ON user_event(provider, provider_track_id);
 CREATE INDEX IF NOT EXISTS user_event_created
   ON user_event(created_at);
 
@@ -241,6 +237,31 @@ CREATE TABLE IF NOT EXISTS cache_stats (
   evictions INTEGER NOT NULL DEFAULT 0,
   updated_at TEXT NOT NULL
 );
+`,
+  },
+  {
+    version: 2,
+    sql: `
+-- Earlier Alpha.2 development databases allowed several recordings per provider
+-- track. Keep the strongest row before enforcing provider identity.
+DELETE FROM provider_mapping
+WHERE entity_type = 'recording'
+  AND id NOT IN (
+    SELECT id FROM provider_mapping AS candidate
+    WHERE candidate.entity_type = 'recording'
+      AND candidate.provider = provider_mapping.provider
+      AND candidate.provider_id = provider_mapping.provider_id
+    ORDER BY CASE candidate.confidence
+      WHEN 'confirmed' THEN 4 WHEN 'identifier' THEN 3 WHEN 'metadata' THEN 2
+      WHEN 'reported' THEN 1 ELSE 0 END DESC, candidate.id DESC
+    LIMIT 1
+  );
+
+CREATE UNIQUE INDEX IF NOT EXISTS provider_mapping_recording_identity
+  ON provider_mapping(provider, provider_id) WHERE entity_type = 'recording';
+CREATE INDEX IF NOT EXISTS user_event_provider
+  ON user_event(provider, provider_track_id);
+ALTER TABLE tag ADD COLUMN kind TEXT NOT NULL DEFAULT '';
 `,
   },
 ];

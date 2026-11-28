@@ -65,7 +65,7 @@ class ReadOnlyProvider {
       }
       // The persistent cache stores public provider responses only; token-bearing
       // requests pass cache:false and never reach this branch.
-      if (cache && this.persistent) {
+      if (cache && !token && this.persistent) {
         let saved = null;
         try { saved = this.persistent.get(this.name, url.href, ''); }
         catch { saved = null; }
@@ -92,7 +92,7 @@ class ReadOnlyProvider {
       if (cache) {
         this.cache.set(url.href, { value, expires: Date.now() + this.cacheAge });
         if (this.cache.size > 512) this.cache.delete(this.cache.keys().next().value);
-        if (value !== null && this.persistent) {
+        if (value !== null && !token && this.persistent) {
           try { this.persistent.put(this.name, url.href, '', value, this.persistentAge || this.cacheAge, url.pathname); }
           catch { /* persistent cache is optional */ }
         }

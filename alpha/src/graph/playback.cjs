@@ -1,5 +1,7 @@
 'use strict';
 
+const { randomUUID } = require('node:crypto');
+
 // Derives factual playback events from the existing player-state IPC stream.
 // Seeking, buffering, playback errors and app shutdown are deliberately not
 // treated as negative feedback. No event is emitted when the app closes.
@@ -7,6 +9,8 @@ function createPlaybackTracker(emit) {
   let current = null;
   let session = 0;
   let closed = false;
+  // Dedupe keys must stay unique across process restarts and database reopen.
+  const epoch = randomUUID();
   const send = (type, state, extra = {}) => {
     if (typeof emit !== 'function') return;
     try {
@@ -31,7 +35,7 @@ function createPlaybackTracker(emit) {
           positionMs: Math.round(current.maxTime * 1000),
           durationMs: duration > 0 ? Math.round(duration * 1000) : null,
           playedMs: Math.round(current.listened * 1000),
-          dedupeKey: `skip:${current.id}:${current.session}`,
+          dedupeKey: `skip:${current.id}:${epoch}:${current.session}`,
           detail: { reason },
         });
       }
@@ -60,7 +64,7 @@ function createPlaybackTracker(emit) {
             positionMs: Math.round(time * 1000),
             durationMs: duration > 0 ? Math.round(duration * 1000) : null,
             playedMs: 0,
-            dedupeKey: `play:${id}:${current.session}`,
+            dedupeKey: `play:${id}:${epoch}:${current.session}`,
           });
         }
         return;
@@ -78,21 +82,21 @@ function createPlaybackTracker(emit) {
           positionMs: 0,
           durationMs: duration > 0 ? Math.round(duration * 1000) : null,
           playedMs: 0,
-          dedupeKey: `replay:${id}:${current.session}`,
+          dedupeKey: `replay:${id}:${epoch}:${current.session}`,
         });
         if (!paused) {
           send('play', current, {
             positionMs: 0,
             durationMs: duration > 0 ? Math.round(duration * 1000) : null,
             playedMs: 0,
-            dedupeKey: `play:${id}:${current.session}`,
+            dedupeKey: `play:${id}:${epoch}:${current.session}`,
           });
         }
         return;
       }
 
       const delta = time - current.lastTime;
-      if (!paused && delta > 0 && delta <= 2.5) current.listened += delta;
+      if (!paused && delta > 0 && delta <= 1.5) current.listened += delta;
       current.maxTime = Math.max(current.maxTime, time);
       current.lastTime = time;
       if (duration > 0) current.duration = duration;
@@ -102,7 +106,7 @@ function createPlaybackTracker(emit) {
           positionMs: Math.round(time * 1000),
           durationMs: current.duration > 0 ? Math.round(current.duration * 1000) : null,
           playedMs: 0,
-          dedupeKey: `play:${id}:${current.session}`,
+          dedupeKey: `play:${id}:${epoch}:${current.session}`,
         });
       }
       if (current.duration > 0 && time >= current.duration - 1.5 && !current.completed) {
@@ -115,13 +119,17 @@ function createPlaybackTracker(emit) {
             positionMs: Math.round(time * 1000),
             durationMs: Math.round(current.duration * 1000),
             playedMs: Math.round(current.listened * 1000),
-            dedupeKey: `complete:${id}:${current.session}`,
+            dedupeKey: `complete:${id}:${epoch}:${current.session}`,
           });
         }
       }    },
     stop() {
       closed = true;
       current = null;
+    },
+    invalidate() {
+      // Playback errors, device loss and stops must not look like user skips.
+      if (current) current.closed = true;
     },
     get current() {
       return current ? { ...current } : null;

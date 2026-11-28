@@ -157,6 +157,10 @@
       const meta = [];
       if (graphStats.schemaVersion != null) meta.push(pair('Схема v', 'Schema v') + graphInt(graphStats.schemaVersion));
       if (cache.entries != null) meta.push(pair('Размер кэша: ', 'Cache size: ') + graphInt(cache.entries) + ' ' + pair('записей', 'entries'));
+      meta.push(pair('Теги: ', 'Tags: ') + graphInt(counts.tags));
+      meta.push(pair('Оценки: ', 'Ratings: ') + graphInt(counts.ratings));
+      meta.push(pair('Позиции изданий: ', 'Release tracks: ') + graphInt(counts.releaseTracks));
+      if (graphStats.recovered) meta.push(pair('База восстановлена после повреждения', 'Database recovered after damage'));
       graphSchema.textContent = meta.join(' · ');
       const updated = graphDate(graphStats.lastUpdated);
       graphUpdated.textContent = updated ? pair('Обновлено: ', 'Updated: ') + updated : '';

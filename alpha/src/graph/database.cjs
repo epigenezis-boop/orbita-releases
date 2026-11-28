@@ -382,6 +382,9 @@ function openGraphDatabase(file, options = {}) {
     },
     transaction(fn) {
       if (typeof fn !== 'function') throw new TypeError('transaction expects a function');
+      if (fn.constructor && fn.constructor.name === 'AsyncFunction') {
+        throw new TypeError('transaction callback must be synchronous');
+      }
       ensureOpen();
       if (depth > 0) return fn();
       raw.exec('BEGIN IMMEDIATE');
