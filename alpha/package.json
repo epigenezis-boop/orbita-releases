@@ -60,6 +60,7 @@
       "createDesktopShortcut": true,
       "shortcutName": "Orbita Alpha",
       "uninstallDisplayName": "Orbita Alpha"
-    }
+    },
+    "publish": null
   }
 }

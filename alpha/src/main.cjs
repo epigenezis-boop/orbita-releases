@@ -1,6 +1,9 @@
 'use strict';
 const {app,BrowserWindow,ipcMain,session,safeStorage,Menu,Tray,nativeImage,dialog,protocol,net,screen}=require('electron');
 const fs=require('node:fs');const path=require('node:path');const {pathToFileURL}=require('node:url');const {API}=require('./api.cjs');
+const {Discovery}=require('./discovery/service.cjs');
+const {createProviders,DiscoveryError}=require('./discovery/providers.cjs');
+const {createStorage}=require('./discovery/storage.cjs');
 // Alpha owns its profile and instance lock independently of the installed stable edition.
 const profileData=path.join(app.getPath('appData'),'orbita-player-alpha');fs.mkdirSync(profileData,{recursive:true});app.setPath('userData',profileData);app.setPath('sessionData',profileData);app.setName('Orbita Alpha');
 if(process.platform==='win32')app.setAppUserModelId('Orbita.Player.Alpha');
@@ -10,7 +13,7 @@ const {LocalLibrary}=require('./local-library.cjs');const {MediaBroker}=require(
 protocol.registerSchemesAsPrivileged([{scheme:'volna-media',privileges:{standard:true,secure:true,supportFetchAPI:true,corsEnabled:true,stream:true}}]);
 const diagnostics=new (require('./diagnostics.cjs').Diagnostics)();let localLibrary,media,loudnessStore,playbackStore,streamGeneration=0,streamRequests;
 const authChildren=new Set();
-let updates;let settingsWindow;let win,auth,web,api,tray,mini,modes,playerState={paused:true,volume:.7,time:0,duration:0},quitting=false;let lastMiniCover;
+let updates;let discovery;let settingsWindow;let win,auth,web,api,tray,mini,modes,playerState={paused:true,volume:.7,time:0,duration:0},quitting=false;let lastMiniCover;
 function sendMiniState(force=false){if(!mini||mini.isDestroyed())return;const packet={...playerState};if(!force&&packet.cover===lastMiniCover)delete packet.cover;else lastMiniCover=packet.cover;mini.webContents.send('widget-state',packet);}
 const widgetUI=pathToFileURL(path.join(__dirname,'widget.html')).href;const ui=pathToFileURL(path.join(__dirname,'index.html')).href;
 const vault=()=>path.join(app.getPath('userData'),'account.bin');
@@ -18,7 +21,7 @@ const prefs={contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurit
 function stored(){try{return safeStorage.decryptString(fs.readFileSync(vault()));}catch{return null;}}
 function save(){diagnostics.add('account-operation',{stage:api.token===stored()?'save-unchanged':'save-changed'});if(!safeStorage.isEncryptionAvailable())throw new Error(i18n.t('Windows не предоставила защищённое хранилище. Вход не сохранён.'));fs.writeFileSync(vault(),safeStorage.encryptString(api.token),{mode:0o600});}
 let transport,accountSession,siteIdentity;
-function request(route,body,token){diagnostics.add('api-call',{source:'application',operation:route==='/api/tiny/profile'?'site-session-read':/^query getStream\b/.test(body?.query||'')?'getStream':'catalog',stage:token?'saved-token':'site-cookies'});return transport.request(route,body,token);}
+function request(route,body,token,signal){diagnostics.add('api-call',{source:'application',operation:route==='/api/tiny/profile'?'site-session-read':/^query getStream\b/.test(body?.query||'')?'getStream':'catalog',stage:token?'saved-token':'site-cookies'});return transport.request(route,body,token,signal);}
 function harden(w){w.webContents.setWindowOpenHandler(()=>({action:'deny'}));w.webContents.on('will-navigate',e=>e.preventDefault());}
 function authWindow(){
  if(auth&&!auth.isDestroyed()){auth.show();return;}
@@ -27,7 +30,7 @@ function authWindow(){
  const secureWindow=w=>{for(const event of ['will-navigate','will-redirect'])w.webContents.on(event,(e,url)=>{if(!secure(url))e.preventDefault();});w.webContents.setWindowOpenHandler(({url})=>secure(url)?{action:'allow',overrideBrowserWindowOptions:{autoHideMenuBar:true,webPreferences:{...prefs,session:web}}}:{action:'deny'});w.webContents.on('did-create-window',child=>{authChildren.add(child);child.on('closed',()=>authChildren.delete(child));secureWindow(child);});};
  secureWindow(auth);auth.on('closed',()=>{auth=null;});auth.loadURL('https://zvuk.com/').catch(()=>{});
 }
-function handle(name,fn){ipcMain.handle(name,async(e,...args)=>{const fromMain=e.sender===win.webContents&&e.senderFrame===win.webContents.mainFrame&&e.senderFrame.url===ui;const fromSettings=settingsWindow&&!settingsWindow.isDestroyed()&&e.sender===settingsWindow.webContents&&e.senderFrame===settingsWindow.webContents.mainFrame&&e.senderFrame.url===pathToFileURL(path.join(__dirname,'settings.html')).href&&['quality-get','quality-set','auth-open','connect','restore','logout','theme-get','theme-set','diagnostics-export','normalization-get','normalization-set','stream-unblock','updates-get','updates-check','updates-download','updates-auto','updates-install','language-set','widget-get','widget-set'].includes(name);if(!fromMain&&!fromSettings)throw new Error('Forbidden');try{return {ok:true,value:await fn(...args)};}catch(error){const code=String(error.message||'').match(/\[([A-Z0-9_\/]+)\]/)?.[1]||'UNKNOWN';diagnostics.add('api-error',{source:'application',stage:name,error:code});return {ok:false,error:error.message};}});}
+function handle(name,fn,scope){ipcMain.handle(name,async(e,...args)=>{const fromMain=e.sender===win.webContents&&e.senderFrame===win.webContents.mainFrame&&e.senderFrame.url===ui;const fromSettings=settingsWindow&&!settingsWindow.isDestroyed()&&e.sender===settingsWindow.webContents&&e.senderFrame===settingsWindow.webContents.mainFrame&&e.senderFrame.url===pathToFileURL(path.join(__dirname,'settings.html')).href&&['quality-get','quality-set','auth-open','connect','restore','logout','theme-get','theme-set','diagnostics-export','normalization-get','normalization-set','stream-unblock','updates-get','updates-check','updates-download','updates-auto','updates-install','language-set','widget-get','widget-set'].includes(name);const settingsSender=scope==='settings'&&settingsWindow&&!settingsWindow.isDestroyed()&&e.sender===settingsWindow.webContents&&e.senderFrame===settingsWindow.webContents.mainFrame&&e.senderFrame.url===pathToFileURL(path.join(__dirname,'settings.html')).href;if(!(scope==='settings'?settingsSender:scope==='main'?fromMain:fromMain||fromSettings))throw new Error('Forbidden');try{return {ok:true,value:await fn(...args)};}catch(error){if(scope)return {ok:false,error:error instanceof DiscoveryError?error.message:'internal'};const code=String(error.message||'').match(/\[([A-Z0-9_\/]+)\]/)?.[1]||'UNKNOWN';diagnostics.add('api-error',{source:'application',stage:name,error:code});return {ok:false,error:error.message};}});}
 if(require('./single-instance.cjs').singleInstance(app,()=>win)){
 app.whenReady().then(async()=>{
  localLibrary=new LocalLibrary(path.join(app.getPath('userData'),'local-library.json'),p=>{if(win&&!win.isDestroyed())win.webContents.send('local-progress',p);},b=>{const image=nativeImage.createFromBuffer(b);if(image.isEmpty())return null;return image.resize({width:256,height:256,quality:'good'}).toJPEG(85);});await localLibrary.load();loudnessStore=new (require('./loudness-store.cjs').LoudnessStore)(path.join(app.getPath('userData'),'orbita-loudness.json'),localLibrary);playbackStore=new (require('./playback-store.cjs').PlaybackStore)(path.join(app.getPath('userData'),'orbita-playback.json'));media=new MediaBroker(localLibrary,(url,opts)=>{diagnostics.add('media-request',{source:'account-session',operation:'audio'});return transport.audio(url,opts);},status=>{diagnostics.add('media',{source:'application',stage:status.code,status:status.status});if(status.code==='MEDIA_RESPONSE')return;if(win&&!win.isDestroyed())win.webContents.send('stream-status',status);});protocol.handle('volna-media',req=>media.handle(req));
@@ -38,6 +41,7 @@ app.whenReady().then(async()=>{
  web.webRequest.onCompleted(filter,d=>diagnostics.add('graphql-http',{source:source(d),status:d.statusCode}));web.webRequest.onErrorOccurred(filter,d=>diagnostics.add('network-error',{source:source(d),error:d.error}));
  web.on('will-download',event=>event.preventDefault());session.defaultSession.setPermissionRequestHandler((_wc,_p,cb)=>cb(false));session.defaultSession.setPermissionCheckHandler(()=>false);
  web.setPermissionRequestHandler((_wc,_p,cb)=>cb(false));web.setPermissionCheckHandler(()=>false);api=new API(request);
+ registerDiscovery();
  const limitFile=path.join(app.getPath('userData'),'orbita-stream-limit.json');let blockedStream=null;try{if(JSON.parse(fs.readFileSync(limitFile,'utf8')).blocked)blockedStream=i18n.t('[STREAM_PAUSED] Orbita сохранила блокировку после предыдущего ответа сервиса. Новый запрос аудио не отправлен. Для одной новой проверки нажми «Повторить проверку аудио» в настройках.');}catch{}
  streamRequests=new (require('./stream-requests.cjs').StreamRequests)((id,q)=>api.stream(id,q,true),{blocked:blockedStream,changed:error=>{try{if(error)fs.writeFileSync(limitFile,JSON.stringify({blocked:true,time:new Date().toISOString()}));else fs.rmSync(limitFile,{force:true});}catch{diagnostics.add('stream-guard',{stage:'persistence-error'});}},event:stage=>diagnostics.add('stream-guard',{stage})});
  handle('stream-unblock',()=>{streamRequests.unblock();return true;});
@@ -92,7 +96,7 @@ app.whenReady().then(async()=>{
  handle('loudness-info',id=>loudnessStore.info(id));handle('loudness-local',id=>{const info=loudnessStore.info(id);if(!info?.eligible||!id.startsWith('local-'))throw Error(i18n.t('Файл недоступен для анализа'));return media.local(id);});handle('loudness-save',(id,stamp,p,complete)=>loudnessStore.put(id,stamp,p,complete));
  handle('like-track',(id,liked)=>api.likeTrack(id,liked));
  handle('auth-open' ,()=>authWindow());
- accountSession=new (require('./account-session.cjs').AccountSession)({api,stored,save,resume:()=>transport.resume(),changed:()=>win.webContents.send('account-changed'),clear:async()=>{streamRequests.cancelPending();streamGeneration++;media.stopRemote();api.token=null;streamRequests.unblock();for(const child of authChildren)if(!child.isDestroyed())child.close();if(auth)auth.close();await web.closeAllConnections();await web.clearStorageData();siteIdentity.clear();fs.rmSync(vault(),{force:true});}});
+ accountSession=new (require('./account-session.cjs').AccountSession)({api,stored,save,resume:()=>transport.resume(),changed:()=>{discovery.accountChanged();win.webContents.send('account-changed');},clear:async()=>{streamRequests.cancelPending();streamGeneration++;media.stopRemote();api.token=null;streamRequests.unblock();for(const child of authChildren)if(!child.isDestroyed())child.close();if(auth)auth.close();await web.closeAllConnections();await web.clearStorageData();siteIdentity.clear();fs.rmSync(vault(),{force:true});}});
  handle('connect',async(token)=>{if(token!==undefined&&(typeof token!=='string'||token.length<10||token.length>4096||/[\r\n]/.test(token)))throw new Error(i18n.t('Неверный формат токена'));diagnostics.add('account-operation',{stage:token===undefined?'connect-site':'connect-manual'});const p=await accountSession.connect(token);if(auth)auth.close();return p;});
  handle('restore',()=>{diagnostics.add('account-operation',{stage:'restore'});return accountSession.restore();});
  handle('logout',()=>accountSession.logout());
@@ -100,6 +104,32 @@ app.whenReady().then(async()=>{
  handle('local-list',()=>localLibrary.list());handle('local-stream',id=>{streamRequests.cancelPending();streamGeneration++;media.stopRemote();return media.local(id);});handle('local-remove',id=>{if(typeof id!=='string')throw Error(i18n.t('Некорректный трек'));return localLibrary.remove(id);});
  handle('local-add',async(kind)=>{if(!['files','folder'].includes(kind))throw Error(i18n.t('Некорректный выбор'));if(localLibrary.busy)throw Error(i18n.t('Дождитесь завершения добавления.'));const result=await dialog.showOpenDialog(win,{title:kind==='folder'?i18n.t('Выберите папку с музыкой'):i18n.t('Выберите аудиофайлы'),properties:kind==='folder'?['openDirectory']:['openFile','multiSelections'],filters:kind==='files'?[{name:i18n.t('Музыка'),extensions:['mp3','flac','wav','ogg','opus','m4a','aac','webm']}]:[]});if(result.canceled)return null;return localLibrary.add(result.filePaths);});
 });
-app.on('before-quit',()=>{updates?.stop();try{playbackStore?.finish(playerState);}catch{}quitting=true;});app.on('window-all-closed',()=>app.quit());
+app.on('before-quit',()=>{updates?.stop();discovery?.cancel();try{playbackStore?.finish(playerState);}catch{}quitting=true;});app.on('window-all-closed',()=>app.quit());
 
+}
+
+function registerDiscovery() {
+ const network = session.fromPartition('discovery-readonly');
+ discovery = new Discovery({
+  providers: createProviders(network.fetch.bind(network)),
+  storage: createStorage(profileData, safeStorage),
+  connected: () => Boolean(accountSession?.profile && api.token),
+  searchZvuk: async (query, signal) => (await api.search(query, null, signal)).tracks,
+  progress: (value) => { if (win && !win.isDestroyed()) win.webContents.send('discovery-progress', value); },
+ });
+ handle('discovery-identify', names => discovery.identify(names), 'main');
+ handle('discovery-recommend', (ids, mode, count) => discovery.recommend(ids, mode, count), 'main');
+ handle('discovery-cancel', () => { discovery.cancel(); return true; }, 'main');
+ handle('discovery-vote', (id, vote) => discovery.saveFeedback(id, vote), 'main');
+ handle('discovery-choose', (id, track) => discovery.choose(id, track), 'main');
+ handle('discovery-export', async () => {
+  const exportData = discovery.exportReport();
+  const choice = await dialog.showSaveDialog(win, { defaultPath: 'Orbita-Discovery.json', filters: [{ name:'JSON', extensions:['json'] }] });
+  if (choice.canceled || !choice.filePath) return false;
+  await fs.promises.writeFile(choice.filePath, JSON.stringify(exportData, null, 2) + '\n', 'utf8');
+  return true;
+ }, 'main');
+ for (const action of ['info', 'save', 'check', 'remove']) {
+  handle('discovery-token-' + action, value => discovery.credential(action, value), 'settings');
+ }
 }

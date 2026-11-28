@@ -35,8 +35,9 @@ function stationGlyph(kind){
  if(kind==='flow'){path('M6 16a10 10 0 0 1 20 0Z','iconSun');path('M3 19q6-2 13 0t13 0 M5 23q5-2 11 0t11 0 M9 27q4-2 7 0t7 0');}
  if(kind==='favorites'){path('M16 26S4 18 4 11a6 6 0 0 1 12-2 6 6 0 0 1 12 2c0 7-12 15-12 15Z');path('m26 2 1.2 3.8L31 7l-3.8 1.2L26 12l-1.2-3.8L21 7l3.8-1.2Z','iconSpark');}
  if(kind==='library'){path('M5 11h22v15a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2Z');path('M3 11h26L26 5H6Z','iconAccent');path('M14 23V15l8-2v8 M14 20c-5-2-5 5 0 3 M22 18c-5-2-5 5 0 3','iconTeal');}
+ if(kind==='discovery'){path('M16 3l3.5 9.5L29 16l-9.5 3.5L16 29l-3.5-9.5L3 16l9.5-3.5Z','iconAccent');path('m17.7 14.3 2.1-2.1-2.1 5.5-5.5 2.1 2.1-2.1 1.4-1.4Z','iconTeal');}
  if(kind==='queue'){for(const y of [8,16,24]){path(`M11 ${y}h14q5 0 3 3H11`,'iconAccent');const c=document.createElementNS(ns,'circle');c.setAttribute('cx','5');c.setAttribute('cy',y+1);c.setAttribute('r','2');c.setAttribute('class','iconSpark');s.append(c);}}
  return s;
 }
-function paintNavigation(){for(const [id,kind,key]of [['waveNav','flow','Мой поток'],['liked','favorites','Любимые треки'],['localNav','library','Библиотека ПК'],['queueNav','queue','Очередь']]){const b=$(id),count=b.querySelector('small');b.replaceChildren(stationGlyph(kind),element('span','',OrbitaI18n.t(key)));if(count)b.append(count);}}
+function paintNavigation(){for(const [id,kind,key]of [['waveNav','flow','Мой поток'],['discoveryNav','discovery','Discovery'],['liked','favorites','Любимые треки'],['localNav','library','Библиотека ПК'],['queueNav','queue','Очередь']]){const b=$(id),count=b.querySelector('small');b.replaceChildren(stationGlyph(kind),element('span','',OrbitaI18n.t(key)));if(count)b.append(count);}}
 paintNavigation();

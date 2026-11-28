@@ -30,9 +30,9 @@ class API {
   this.token=candidate;
   return {name:p?.name||p?.first_name||'Мой аккаунт'};
  }
- async gql(query,variables={}){
+ async gql(query,variables={},signal){
   if(!this.token)throw new Error('[AUTH_REQUIRED] Сначала подключите аккаунт');
-  const d=await this.request('/api/v1/graphql',{query,variables,...(/^query getStream\b/.test(query)?{operationName:'getStream'}:{})},this.token);
+  const d=await this.request('/api/v1/graphql',{query,variables,...(/^query getStream\b/.test(query)?{operationName:'getStream'}:{})},this.token,signal);
   if(d.errors?.length){
    const text=d.errors.map(e=>String(e.extensions?.code||'')+' '+String(e.message||'')).join(' ');
    const stage=/personalWaveContent/.test(query)?'WAVE':/mediaContents/.test(query)?'STREAM':/addItem|removeItem/.test(query)?'FAVORITE':'COLLECTION';
@@ -51,10 +51,10 @@ class API {
  async tracks(ids){if(!Array.isArray(ids)||ids.length>100)throw new Error('Слишком много треков');const d=await this.gql(`query($ids:[ID!]!){getTracks(ids:$ids){${TRACK}}}`,{ids:ids.map(id)});const rows=(d.getTracks||[]).filter(Boolean).map(track);const m=new Map(rows.map(t=>[t.id,t]));return ids.map(i=>m.get(String(i))).filter(Boolean);}
  async playlists(ids){if(!Array.isArray(ids)||ids.length>100)throw new Error('Слишком много плейлистов');const d=await this.gql('query($ids:[ID!]!){playlists(ids:$ids){id title image{src} duration}}',{ids:ids.map(id)});return (d.playlists||[]).filter(Boolean).map(p=>({id:id(p.id),title:p.title,cover:p.image?.src||''}));}
  async playlist(value,offset=0){if(!Number.isSafeInteger(offset)||offset<0)throw new Error('Некорректная страница');const d=await this.gql(`query($id:ID!,$offset:Int!){playlistTracks(id:$id,limit:100,offset:$offset){${TRACK}}}`,{id:id(value),offset});return (d.playlistTracks||[]).map(track);}
- async search(q,cursor=null){
+ async search(q,cursor=null,signal){
  if(typeof q!=='string'||q.trim().length<2||q.length>200)throw Error('Введите от 2 до 200 символов');
  if(cursor!==null&&(typeof cursor!=='string'||cursor.length>4096))throw Error('Некорректная страница поиска');
- const d=await this.gql(`query OrbitaSearch($q:String,$cursor:Cursor){search(query:$q){tracks(limit:100,cursor:$cursor){page{next} items{${TRACK}}}}}`,{q:q.trim(),cursor});
+ const d=await this.gql(`query OrbitaSearch($q:String,$cursor:Cursor){search(query:$q){tracks(limit:100,cursor:$cursor){page{next} items{${TRACK}}}}}`,{q:q.trim(),cursor},signal);
  const result=d.search?.tracks;if(!result||!Array.isArray(result.items))throw Error('[SEARCH_EMPTY] Звук не предоставил результаты поиска');
  return {tracks:Search.rank(result.items.filter(Boolean).map(track),q,true),next:result.page?.next||null};
  }

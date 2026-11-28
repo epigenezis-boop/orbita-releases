@@ -1,0 +1,113 @@
+.brand .wordmark small {
+  color: var(--muted);
+  display: block;
+  font: 600 10px OrbitaText, sans-serif;
+  letter-spacing: .15em;
+  margin-top: 5px;
+}
+.discovery-active .music, .discovery-active #searchForm {
+  display: none;
+}
+#discoveryPanel {
+  margin: 20px 0;
+}
+#discoveryPanel h2 {
+  margin: 0 0 8px;
+}
+#discoveryPanel [hidden] {
+  display: none;
+}
+#discoveryForm, #discoveryChoices {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+#discoveryForm {
+  width: 100%;
+  max-width: none;
+  padding: 0;
+  border: 0;
+  background: none;
+  box-shadow: none;
+}
+#discoveryForm > .discoveryActions {
+  grid-column: 1 / -1;
+}
+@media (min-width: 1270px) {
+  #discoveryForm { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+}
+.discoveryField {
+  display: grid;
+  min-width: 0;
+  gap: 5px;
+  color: var(--muted);
+}
+.discoveryField input, .discoveryField select, #discoveryToken {
+  width: 100%;
+  border: 1px solid var(--soft-edge);
+  border-radius: 7px;
+  color: var(--ink);
+  background: var(--surface2);
+  padding: 9px;
+  font: inherit;
+}
+.discoveryActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+#discoveryChoices:not(:empty), .discoveryControls {
+  margin: 12px 0;
+}
+.discoveryControls {
+  align-items: end;
+}
+#discoveryNotices:empty, #discoveryStatus:empty {
+  display: none;
+}
+#discoveryNotices, #discoveryStatus {
+  color: var(--muted);
+}
+.discoveryCard {
+  display: grid;
+  grid-template-columns: 46px minmax(0, 1fr);
+  align-items: start;
+  gap: 12px;
+  border: 1px solid var(--soft-edge);
+  border-radius: 8px;
+  background: var(--surface);
+  padding: 14px;
+  margin: 10px 0;
+}
+.discoveryCard .cover {
+  width: 46px;
+  height: 46px;
+}
+.discoveryCard h3, .discoveryCard p {
+  margin: 0 0 7px;
+  overflow-wrap: anywhere;
+}
+.discoveryDetails {
+  border-color: var(--soft-edge);
+  margin: 10px 0 0;
+  padding: 8px 0 0;
+}
+.discoveryDetails ul {
+  max-height: 200px;
+  overflow: auto;
+}
+.discoveryOption {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  padding: 5px 0;
+}
+.discoveryOption button {
+  flex: 0 0 auto;
+}
+.discoveryActions [aria-pressed=true] {
+  border-color: var(--teal);
+  color: var(--teal);
+}
