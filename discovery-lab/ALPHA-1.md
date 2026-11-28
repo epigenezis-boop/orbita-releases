@@ -1,0 +1,5 @@
+# Discovery Lab — alpha.1 (standalone)
+
+Windows: extract the branch ZIP, open discovery-lab and double-click Start-Discovery-Lab.cmd. Requires Node.js 18+ and Windows curl.exe. The browser opens on a random loopback port. Leave the console open; Ctrl+C closes the server. No installation, no profile access, no updater. Enter your own ListenBrainz token; never commit it. The token is held only during a search and sent only to ListenBrainz (not written to reports). The form clears it after each run. Default proxy is local HTTP port 10809; clear if unnecessary. Add 1–4 seed artists separated by semicolons. Use exact names or MBIDs. Export JSON after manually marking whether each track exists in Zvuk and whether you like it.
+
+This is a test companion, not an integrated player or Windows EXE. No automatic Zvuk matching, audio playback, cover requests, scrobbling, or personal account history transfer. Existing stable package is untouched. Live network and Windows behavior require a local test. The next step is extraction of the actual Electron sources and integration via its existing Zvuk client.
